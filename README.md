@@ -1,10 +1,10 @@
-# EPUB Reader
+# PDF Compress
 
-A personal EPUB reader that runs as a static web app. Open the site in WeChat or a normal browser, choose an EPUB file, and read it locally in the browser.
+A small static web app for local file handling in WeChat or a normal browser.
 
 ## Privacy
 
-The app does not include a backend, database, account system, or stored book library. EPUB files are selected by the user and parsed in the browser.
+The app does not include a backend, database, account system, or stored file library. Files are selected by the user and handled locally in the browser.
 
 ## Local Development
 
@@ -25,7 +25,7 @@ npm run build
 The repository is configured for the GitHub Pages project URL:
 
 ```text
-https://maxxiaoqinwang.github.io/epub_reader/
+https://maxxiaoqinwang.github.io/pdf_compress/
 ```
 
-If the WeChat browser cannot choose an EPUB file on a device, open the same URL in the system browser from WeChat's top-right menu.
+If the WeChat browser cannot choose a file on a device, open the same URL in the system browser from WeChat's top-right menu.

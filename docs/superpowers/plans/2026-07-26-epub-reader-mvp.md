@@ -4,7 +4,7 @@
 
 **Goal:** Build a static GitHub Pages EPUB reader for personal use in WeChat and normal browsers.
 
-**Architecture:** A Vite React app loads an EPUB chosen by the user with a file picker, renders it with `epub.js`, and stores reader settings/progress locally. The app has no backend and is published by GitHub Actions to GitHub Pages using the `/epub_reader/` base path.
+**Architecture:** A Vite React app loads a file chosen by the user with a file picker, renders supported local documents, and stores settings/progress locally. The app has no backend and is published by GitHub Actions to GitHub Pages using the `/pdf_compress/` base path.
 
 **Tech Stack:** React, TypeScript, Vite, Vitest, Testing Library, epub.js, GitHub Actions, GitHub Pages.
 
@@ -162,7 +162,7 @@ git commit -m "feat: add browser epub reader"
 
 - [ ] **Step 1: Configure GitHub Pages base path**
 
-Set `base: "/epub_reader/"` in `vite.config.ts`.
+Set `base: "/pdf_compress/"` in `vite.config.ts`.
 
 - [ ] **Step 2: Add GitHub Actions Pages workflow**
 
@@ -219,4 +219,3 @@ git add README.md
 git commit -m "docs: add reader usage notes"
 git push
 ```
-
