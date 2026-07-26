@@ -8,6 +8,8 @@ import {
   type ReadingMode
 } from "../lib/storage";
 import { formatReadingModeLabel } from "../lib/readerLabels";
+import { getRenditionOptions } from "../lib/renditionOptions";
+import { getNextSpineIndex, isNearScrollEnd } from "../lib/scrollAdvance";
 
 type ReaderProps = {
   file: File;
@@ -21,6 +23,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
+  const autoAdvanceCleanupRef = useRef<(() => void) | null>(null);
   const savedState = useMemo(() => loadReaderState(), []);
   const restoreCfiRef = useRef<string | null>(savedState.cfi);
   const latestSettingsRef = useRef({
@@ -60,12 +63,7 @@ export function Reader({ file, onClose }: ReaderProps) {
         }
 
         const book = ePub(buffer, { replacements: "blobUrl" });
-        const rendition = book.renderTo(hostElement, {
-          width: "100%",
-          height: "100%",
-          flow: readingMode === "scroll" ? "scrolled-doc" : "paginated",
-          spread: "none"
-        });
+        const rendition = book.renderTo(hostElement, getRenditionOptions(readingMode));
 
         bookRef.current = book;
         renditionRef.current = rendition;
@@ -98,6 +96,10 @@ export function Reader({ file, onClose }: ReaderProps) {
           await rendition.display();
         }
 
+        autoAdvanceCleanupRef.current?.();
+        autoAdvanceCleanupRef.current =
+          readingMode === "scroll" ? attachScrollAutoAdvance(hostElement, rendition) : null;
+
         if (!cancelled) {
           setStatus("ready");
           setMessage("");
@@ -114,6 +116,8 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     return () => {
       cancelled = true;
+      autoAdvanceCleanupRef.current?.();
+      autoAdvanceCleanupRef.current = null;
       renditionRef.current?.destroy();
       bookRef.current?.destroy();
       renditionRef.current = null;
@@ -234,6 +238,73 @@ export function Reader({ file, onClose }: ReaderProps) {
       ) : null}
     </section>
   );
+}
+
+function attachScrollAutoAdvance(hostElement: HTMLElement, rendition: Rendition): () => void {
+  const scroller = hostElement.querySelector<HTMLElement>(".epub-container");
+  if (!scroller) {
+    return () => {};
+  }
+  const scrollElement = scroller;
+
+  let locked = false;
+  let touchStartY: number | null = null;
+
+  async function advanceIfNeeded() {
+    if (locked || !isNearScrollEnd(scrollElement)) {
+      return;
+    }
+
+    locked = true;
+    try {
+      const location = await Promise.resolve(rendition.currentLocation() as unknown);
+      const nextIndex = getNextSpineIndex(location);
+      if (nextIndex === null) {
+        await rendition.next();
+      } else {
+        await rendition.display(nextIndex);
+      }
+    } catch {
+      await rendition.next();
+    } finally {
+      window.setTimeout(() => {
+        locked = false;
+      }, 450);
+    }
+  }
+
+  function handleScroll() {
+    void advanceIfNeeded();
+  }
+
+  function handleWheel(event: WheelEvent) {
+    if (event.deltaY > 0) {
+      void advanceIfNeeded();
+    }
+  }
+
+  function handleTouchStart(event: TouchEvent) {
+    touchStartY = event.touches[0]?.clientY ?? null;
+  }
+
+  function handleTouchMove(event: TouchEvent) {
+    const currentY = event.touches[0]?.clientY ?? null;
+    if (touchStartY !== null && currentY !== null && touchStartY - currentY > 12) {
+      void advanceIfNeeded();
+    }
+  }
+
+  scrollElement.addEventListener("scroll", handleScroll, { passive: true });
+  scrollElement.addEventListener("wheel", handleWheel, { passive: true });
+  scrollElement.addEventListener("touchstart", handleTouchStart, { passive: true });
+  scrollElement.addEventListener("touchmove", handleTouchMove, { passive: true });
+
+  return () => {
+    scrollElement.removeEventListener("scroll", handleScroll);
+    scrollElement.removeEventListener("wheel", handleWheel);
+    scrollElement.removeEventListener("touchstart", handleTouchStart);
+    scrollElement.removeEventListener("touchmove", handleTouchMove);
+  };
 }
 
 type TocPanelProps = {

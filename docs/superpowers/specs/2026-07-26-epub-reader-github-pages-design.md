@@ -33,7 +33,7 @@ If WeChat's built-in browser cannot select `.epub` files on a device, the app wi
 
 ## Mobile Reading UX
 
-Mobile reading defaults to continuous vertical scrolling because it fits WeChat's browser and one-handed use better than paginated controls. The table of contents is not permanently visible on mobile; it opens as a bottom sheet. Primary controls sit in a fixed bottom toolbar with Chinese labels: contents, previous chapter/page, text settings, theme, and next chapter/page.
+Mobile reading defaults to continuous vertical scrolling because it fits WeChat's browser and one-handed use better than paginated controls. Scroll mode must continue across EPUB spine items, so manga-style books can keep advancing by swiping down instead of stopping inside the current image page or chapter. The table of contents is not permanently visible on mobile; it opens as a bottom sheet. Primary controls sit in a fixed bottom toolbar with Chinese labels: contents, previous chapter/page, text settings, reading mode, theme, and next chapter/page.
 
 The top reading chrome is compact. It shows only the current title and a return action, leaving the rest of the viewport for the book. Text settings open as a small panel for font size, line height, theme, and scroll/page mode.
 
