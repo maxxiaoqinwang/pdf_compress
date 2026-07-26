@@ -7,6 +7,7 @@ import {
   type ReaderTheme,
   type ReadingMode
 } from "../lib/storage";
+import { formatReadingModeLabel } from "../lib/readerLabels";
 
 type ReaderProps = {
   file: File;
@@ -175,7 +176,7 @@ export function Reader({ file, onClose }: ReaderProps) {
           Aa
         </button>
         <button type="button" onClick={toggleReadingMode}>
-          {readingMode === "scroll" ? "滚动" : "分页"}
+          {formatReadingModeLabel(readingMode)}
         </button>
         <button type="button" onClick={toggleTheme}>
           {theme === "paper" ? "夜间" : "日间"}

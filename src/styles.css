@@ -265,7 +265,7 @@ h1 {
 
 .bottom-toolbar {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: 0.86fr 0.86fr 0.72fr 1.38fr 0.86fr 0.86fr;
   gap: 6px;
   padding: 10px 12px 12px;
   border-top: 1px solid rgba(72, 60, 44, 0.14);
@@ -279,8 +279,8 @@ h1 {
 
 .bottom-toolbar button {
   min-width: 0;
-  padding: 0 4px;
-  font-size: 0.92rem;
+  padding: 0 3px;
+  font-size: 0.84rem;
 }
 
 .sheet-backdrop {
