@@ -31,6 +31,12 @@ https://<github-username>.github.io/epub-reader/
 
 If WeChat's built-in browser cannot select `.epub` files on a device, the app will show a fallback hint telling the user to open the same URL in the system browser.
 
+## Mobile Reading UX
+
+Mobile reading defaults to continuous vertical scrolling because it fits WeChat's browser and one-handed use better than paginated controls. The table of contents is not permanently visible on mobile; it opens as a bottom sheet. Primary controls sit in a fixed bottom toolbar with Chinese labels: contents, previous chapter/page, text settings, theme, and next chapter/page.
+
+The top reading chrome is compact. It shows only the current title and a return action, leaving the rest of the viewport for the book. Text settings open as a small panel for font size, line height, theme, and scroll/page mode.
+
 ## Architecture
 
 The app contains these units:
@@ -70,4 +76,3 @@ Before publishing, verify:
 - Reading progress survives refresh.
 - Production build works with the GitHub Pages base path.
 - The published URL opens inside WeChat and reaches the file picker.
-

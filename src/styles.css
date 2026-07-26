@@ -128,33 +128,33 @@ h1 {
 }
 
 .reader-shell {
+  position: relative;
   min-height: calc(100vh - 64px);
   overflow: hidden;
   border: 1px solid rgba(72, 60, 44, 0.22);
   border-radius: 8px;
   background: #fbf7ef;
-  box-shadow: 0 24px 80px rgba(67, 53, 34, 0.16);
 }
 
 .reader-shell.night {
   border-color: rgba(231, 224, 213, 0.16);
   background: #171613;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
 }
 
-.reader-toolbar {
+.reader-topbar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
   align-items: center;
-  padding: 14px;
-  border-bottom: 1px solid rgba(72, 60, 44, 0.16);
-  background: rgba(246, 241, 232, 0.9);
+  min-height: 54px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(72, 60, 44, 0.12);
+  background: rgba(251, 247, 239, 0.96);
 }
 
-.night .reader-toolbar {
-  border-bottom-color: rgba(231, 224, 213, 0.14);
-  background: rgba(23, 22, 19, 0.94);
+.night .reader-topbar {
+  border-bottom-color: rgba(231, 224, 213, 0.12);
+  background: rgba(23, 22, 19, 0.96);
 }
 
 .book-title {
@@ -186,8 +186,10 @@ h1 {
   color: #eee7db;
 }
 
-.ghost-button,
-.reader-controls button {
+.icon-text-button,
+.bottom-toolbar button,
+.reader-sheet button {
+  cursor: pointer;
   min-height: 40px;
   padding: 0 12px;
   border: 1px solid rgba(72, 60, 44, 0.18);
@@ -197,24 +199,18 @@ h1 {
   font-weight: 750;
 }
 
-.night .ghost-button,
-.night .reader-controls button {
+.night .icon-text-button,
+.night .bottom-toolbar button,
+.night .reader-sheet button {
   border-color: rgba(231, 224, 213, 0.2);
   color: #eee7db;
   background: #24221d;
 }
 
-.reader-controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .reader-layout {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  min-height: calc(100vh - 137px);
+  min-height: calc(100vh - 174px);
 }
 
 .toc-panel {
@@ -259,12 +255,122 @@ h1 {
 .reader-stage {
   position: relative;
   min-width: 0;
-  min-height: calc(100vh - 137px);
+  min-height: calc(100vh - 174px);
 }
 
 .rendition-root {
   width: 100%;
-  height: calc(100vh - 137px);
+  height: calc(100vh - 174px);
+}
+
+.bottom-toolbar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(72, 60, 44, 0.14);
+  background: rgba(251, 247, 239, 0.98);
+}
+
+.night .bottom-toolbar {
+  border-top-color: rgba(231, 224, 213, 0.12);
+  background: rgba(23, 22, 19, 0.98);
+}
+
+.bottom-toolbar button {
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.reader-sheet {
+  width: 100%;
+  max-height: min(72vh, 640px);
+  overflow: auto;
+  padding: 14px;
+  border-radius: 14px 14px 0 0;
+  color: #26231f;
+  background: #fbf7ef;
+}
+
+.night .reader-sheet {
+  color: #e7e0d5;
+  background: #171613;
+}
+
+.sheet-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  background: inherit;
+}
+
+.sheet-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.toc-panel.sheet {
+  padding: 0;
+  border: 0;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.setting-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.setting-stepper > span {
+  font-weight: 800;
+}
+
+.setting-stepper div,
+.segmented-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-stepper strong {
+  min-width: 62px;
+  text-align: center;
+}
+
+.segmented-control {
+  padding: 4px;
+  border: 1px solid rgba(72, 60, 44, 0.18);
+  border-radius: 8px;
+}
+
+.segmented-control button {
+  flex: 1;
+  border-color: transparent;
+  background: transparent;
+}
+
+.segmented-control button.selected {
+  color: #f8f1e4;
+  background: #2f5d50;
 }
 
 .reader-message {
@@ -290,6 +396,14 @@ h1 {
 }
 
 @media (max-width: 760px) {
+  :root {
+    background: #fbf7ef;
+  }
+
+  body {
+    background: #fbf7ef;
+  }
+
   .app-shell {
     padding: 0;
   }
@@ -300,32 +414,52 @@ h1 {
   }
 
   .reader-shell {
-    min-height: 100vh;
+    min-height: 100dvh;
     border: 0;
     border-radius: 0;
   }
 
-  .reader-toolbar {
-    grid-template-columns: 1fr;
-  }
-
-  .reader-controls {
-    justify-content: flex-start;
+  .reader-topbar {
+    min-height: 48px;
+    padding: 6px 10px;
   }
 
   .reader-layout {
     grid-template-columns: 1fr;
+    min-height: calc(100dvh - 112px - env(safe-area-inset-bottom));
   }
 
-  .toc-panel {
-    max-height: 28vh;
-    border-right: 0;
-    border-bottom: 1px solid rgba(72, 60, 44, 0.14);
+  .toc-panel.desktop {
+    display: none;
   }
 
   .reader-stage,
   .rendition-root {
-    min-height: 62vh;
-    height: 62vh;
+    min-height: calc(100dvh - 112px - env(safe-area-inset-bottom));
+    height: calc(100dvh - 112px - env(safe-area-inset-bottom));
+  }
+
+  .bottom-toolbar {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .reader-message {
+    inset: 16px;
+  }
+
+  .reader-shell.night,
+  .reader-shell.night ~ * {
+    background: #171613;
+  }
+}
+
+@media (min-width: 761px) {
+  .sheet-backdrop {
+    display: none;
   }
 }

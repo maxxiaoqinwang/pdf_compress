@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ePub from "epubjs";
 import type { Book, Location, NavItem, Rendition } from "epubjs";
-import { loadReaderState, saveReaderState, type ReaderTheme } from "../lib/storage";
+import {
+  loadReaderState,
+  saveReaderState,
+  type ReaderTheme,
+  type ReadingMode
+} from "../lib/storage";
 
 type ReaderProps = {
   file: File;
@@ -9,19 +14,32 @@ type ReaderProps = {
 };
 
 type LoadStatus = "loading" | "ready" | "error";
+type ReaderSheet = "toc" | "settings" | null;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const savedState = useMemo(() => loadReaderState(), []);
+  const restoreCfiRef = useRef<string | null>(savedState.cfi);
+  const latestSettingsRef = useRef({
+    fontScale: savedState.fontScale,
+    lineHeight: savedState.lineHeight,
+    readingMode: savedState.readingMode,
+    theme: savedState.theme
+  });
   const [status, setStatus] = useState<LoadStatus>("loading");
-  const [message, setMessage] = useState("Opening book...");
+  const [message, setMessage] = useState("正在打开 EPUB...");
   const [title, setTitle] = useState(file.name);
   const [toc, setToc] = useState<NavItem[]>([]);
   const [currentCfi, setCurrentCfi] = useState<string | null>(savedState.cfi);
   const [fontScale, setFontScale] = useState(savedState.fontScale);
+  const [lineHeight, setLineHeight] = useState(savedState.lineHeight);
+  const [readingMode, setReadingMode] = useState<ReadingMode>(savedState.readingMode);
   const [theme, setTheme] = useState<ReaderTheme>(savedState.theme);
+  const [activeSheet, setActiveSheet] = useState<ReaderSheet>(null);
+
+  latestSettingsRef.current = { fontScale, lineHeight, readingMode, theme };
 
   useEffect(() => {
     let cancelled = false;
@@ -32,7 +50,7 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     async function openBook(hostElement: HTMLDivElement) {
       setStatus("loading");
-      setMessage("Reading EPUB package...");
+      setMessage("正在读取书籍...");
 
       try {
         const buffer = await file.arrayBuffer();
@@ -44,14 +62,14 @@ export function Reader({ file, onClose }: ReaderProps) {
         const rendition = book.renderTo(hostElement, {
           width: "100%",
           height: "100%",
-          flow: "paginated",
+          flow: readingMode === "scroll" ? "scrolled-doc" : "paginated",
           spread: "none"
         });
 
         bookRef.current = book;
         renditionRef.current = rendition;
         registerThemes(rendition);
-        applyReaderStyle(rendition, theme, fontScale);
+        applyReaderStyle(rendition, theme, fontScale, lineHeight);
 
         const [metadata, navigation] = await Promise.all([
           book.loaded.metadata,
@@ -67,12 +85,14 @@ export function Reader({ file, onClose }: ReaderProps) {
 
         rendition.on("relocated", (location: Location) => {
           const cfi = location.start?.cfi ?? null;
+          const latest = latestSettingsRef.current;
+          restoreCfiRef.current = cfi;
           setCurrentCfi(cfi);
-          saveReaderState({ cfi, fontScale, theme });
+          saveReaderState({ cfi, ...latest });
         });
 
         try {
-          await rendition.display(savedState.cfi ?? undefined);
+          await rendition.display(restoreCfiRef.current ?? savedState.cfi ?? undefined);
         } catch {
           await rendition.display();
         }
@@ -84,7 +104,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       } catch {
         if (!cancelled) {
           setStatus("error");
-          setMessage("This EPUB could not be opened. Try another reflowable EPUB file.");
+          setMessage("这本 EPUB 暂时打不开。可以换一本普通流式 EPUB 试试。");
         }
       }
     }
@@ -98,7 +118,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       renditionRef.current = null;
       bookRef.current = null;
     };
-  }, [file, savedState.cfi]);
+  }, [file, readingMode, savedState.cfi]);
 
   useEffect(() => {
     const rendition = renditionRef.current;
@@ -106,76 +126,160 @@ export function Reader({ file, onClose }: ReaderProps) {
       return;
     }
 
-    applyReaderStyle(rendition, theme, fontScale);
-    saveReaderState({ cfi: currentCfi, fontScale, theme });
-  }, [currentCfi, fontScale, theme]);
+    applyReaderStyle(rendition, theme, fontScale, lineHeight);
+    saveReaderState({ cfi: currentCfi, fontScale, lineHeight, readingMode, theme });
+  }, [currentCfi, fontScale, lineHeight, readingMode, theme]);
 
   async function goToChapter(href: string) {
     await renditionRef.current?.display(href);
+    setActiveSheet(null);
+  }
+
+  function toggleTheme() {
+    setTheme((value) => (value === "paper" ? "night" : "paper"));
   }
 
   return (
-    <section className={`reader-shell ${theme}`} aria-label="EPUB reader">
-      <header className="reader-toolbar">
-        <button className="ghost-button" type="button" onClick={onClose}>
-          Library
+    <section className={`reader-shell ${theme} ${readingMode}`} aria-label="EPUB reader">
+      <header className="reader-topbar">
+        <button className="icon-text-button" type="button" onClick={onClose}>
+          返回
         </button>
         <div className="book-title">
-          <span>Now reading</span>
+          <span>正在阅读</span>
           <strong>{title}</strong>
-        </div>
-        <div className="reader-controls" aria-label="Reader controls">
-          <button type="button" onClick={() => void renditionRef.current?.prev()}>
-            Prev
-          </button>
-          <button type="button" onClick={() => void renditionRef.current?.next()}>
-            Next
-          </button>
-          <button
-            type="button"
-            onClick={() => setFontScale((value) => Math.max(80, value - 10))}
-          >
-            A-
-          </button>
-          <button
-            type="button"
-            onClick={() => setFontScale((value) => Math.min(160, value + 10))}
-          >
-            A+
-          </button>
-          <button
-            type="button"
-            onClick={() => setTheme((value) => (value === "paper" ? "night" : "paper"))}
-          >
-            {theme === "paper" ? "Night" : "Paper"}
-          </button>
         </div>
       </header>
 
       <div className="reader-layout">
-        <nav className="toc-panel" aria-label="Table of contents">
-          <h2>Contents</h2>
-          {toc.length > 0 ? (
-            <ol>
-              {toc.map((item) => (
-                <li key={`${item.id}-${item.href}`}>
-                  <button type="button" onClick={() => void goToChapter(item.href)}>
-                    {item.label}
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>No table of contents found.</p>
-          )}
-        </nav>
+        <TocPanel toc={toc} onSelect={(href) => void goToChapter(href)} variant="desktop" />
 
         <div className="reader-stage">
           {status !== "ready" ? <div className={`reader-message ${status}`}>{message}</div> : null}
           <div ref={mountRef} className="rendition-root" />
         </div>
       </div>
+
+      <nav className="bottom-toolbar" aria-label="阅读控制">
+        <button type="button" onClick={() => setActiveSheet("toc")}>
+          目录
+        </button>
+        <button type="button" onClick={() => void renditionRef.current?.prev()}>
+          上章
+        </button>
+        <button type="button" onClick={() => setActiveSheet("settings")}>
+          Aa
+        </button>
+        <button type="button" onClick={toggleTheme}>
+          {theme === "paper" ? "夜间" : "日间"}
+        </button>
+        <button type="button" onClick={() => void renditionRef.current?.next()}>
+          下章
+        </button>
+      </nav>
+
+      {activeSheet ? (
+        <div className="sheet-backdrop" onClick={() => setActiveSheet(null)}>
+          <section className="reader-sheet" onClick={(event) => event.stopPropagation()}>
+            <header className="sheet-header">
+              <h2>{activeSheet === "toc" ? "目录" : "阅读设置"}</h2>
+              <button type="button" onClick={() => setActiveSheet(null)}>
+                关闭
+              </button>
+            </header>
+            {activeSheet === "toc" ? (
+              <TocPanel toc={toc} onSelect={(href) => void goToChapter(href)} variant="sheet" />
+            ) : (
+              <div className="settings-panel">
+                <SettingStepper
+                  label="字号"
+                  value={`${fontScale}%`}
+                  onDecrease={() => setFontScale((value) => Math.max(80, value - 10))}
+                  onIncrease={() => setFontScale((value) => Math.min(160, value + 10))}
+                />
+                <SettingStepper
+                  label="行距"
+                  value={`${lineHeight}%`}
+                  onDecrease={() => setLineHeight((value) => Math.max(140, value - 10))}
+                  onIncrease={() => setLineHeight((value) => Math.min(220, value + 10))}
+                />
+                <div className="segmented-control" aria-label="阅读模式">
+                  <button
+                    className={readingMode === "scroll" ? "selected" : ""}
+                    type="button"
+                    onClick={() => setReadingMode("scroll")}
+                  >
+                    滚动
+                  </button>
+                  <button
+                    className={readingMode === "page" ? "selected" : ""}
+                    type="button"
+                    onClick={() => setReadingMode("page")}
+                  >
+                    分页
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+type TocPanelProps = {
+  toc: NavItem[];
+  onSelect: (href: string) => void;
+  variant: "desktop" | "sheet";
+};
+
+function TocPanel({ toc, onSelect, variant }: TocPanelProps) {
+  return (
+    <nav className={`toc-panel ${variant}`} aria-label="目录">
+      {variant === "desktop" ? <h2>目录</h2> : null}
+      {toc.length > 0 ? (
+        <ol>
+          {toc.flatMap((item) => flattenNavItem(item)).map((item) => (
+            <li key={`${item.id}-${item.href}`}>
+              <button type="button" onClick={() => onSelect(item.href)}>
+                {item.label}
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p>这本书没有可用目录。</p>
+      )}
+    </nav>
+  );
+}
+
+function flattenNavItem(item: NavItem): NavItem[] {
+  return [item, ...(item.subitems ?? []).flatMap((child) => flattenNavItem(child))];
+}
+
+type SettingStepperProps = {
+  label: string;
+  value: string;
+  onDecrease: () => void;
+  onIncrease: () => void;
+};
+
+function SettingStepper({ label, value, onDecrease, onIncrease }: SettingStepperProps) {
+  return (
+    <div className="setting-stepper">
+      <span>{label}</span>
+      <div>
+        <button type="button" onClick={onDecrease}>
+          -
+        </button>
+        <strong>{value}</strong>
+        <button type="button" onClick={onIncrease}>
+          +
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -185,7 +289,8 @@ function registerThemes(rendition: Rendition) {
       color: "#26231f",
       background: "#fbf7ef",
       "font-family": "Georgia, 'Times New Roman', serif",
-      "line-height": "1.75"
+      margin: "0 !important",
+      padding: "0 1.25rem 5rem !important"
     },
     img: {
       "max-width": "100%",
@@ -198,7 +303,8 @@ function registerThemes(rendition: Rendition) {
       color: "#e7e0d5",
       background: "#171613",
       "font-family": "Georgia, 'Times New Roman', serif",
-      "line-height": "1.75"
+      margin: "0 !important",
+      padding: "0 1.25rem 5rem !important"
     },
     a: {
       color: "#d7b56d"
@@ -210,7 +316,13 @@ function registerThemes(rendition: Rendition) {
   });
 }
 
-function applyReaderStyle(rendition: Rendition, theme: ReaderTheme, fontScale: number) {
+function applyReaderStyle(
+  rendition: Rendition,
+  theme: ReaderTheme,
+  fontScale: number,
+  lineHeight: number
+) {
   rendition.themes.select(theme);
   rendition.themes.fontSize(`${fontScale}%`);
+  rendition.themes.override("line-height", `${lineHeight}%`);
 }
