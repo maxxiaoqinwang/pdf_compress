@@ -6,8 +6,11 @@ describe("getRenditionOptions", () => {
     expect(getRenditionOptions("scroll")).toMatchObject({
       flow: "scrolled",
       manager: "continuous",
+      afterScrolledTimeout: 80,
       spread: "none"
     });
+    expect(getRenditionOptions("scroll")).not.toHaveProperty("offset");
+    expect(getRenditionOptions("scroll")).not.toHaveProperty("offsetDelta");
   });
 
   it("uses the default paginated renderer for page mode", () => {

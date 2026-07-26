@@ -4,6 +4,8 @@ type ScrollMetrics = {
   scrollHeight: number;
 };
 
+export const SCROLL_PREFETCH_OFFSET = 1600;
+
 export function isNearScrollEnd(scroller: ScrollMetrics, threshold = 96): boolean {
   return scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - threshold;
 }
@@ -18,13 +20,17 @@ type ContinuousRenditionLike = {
 
 export async function primeContinuousScroll(
   rendition: unknown,
-  offsetTop = 1200
+  offsetTop = SCROLL_PREFETCH_OFFSET
 ): Promise<boolean> {
   const manager = (rendition as ContinuousRenditionLike).manager;
   if (!manager || typeof manager.check !== "function") {
     return false;
   }
 
-  await manager.check.call(manager, 0, offsetTop);
-  return true;
+  try {
+    await manager.check.call(manager, 0, offsetTop);
+    return true;
+  } catch {
+    return false;
+  }
 }

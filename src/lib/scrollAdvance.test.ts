@@ -29,10 +29,22 @@ describe("primeContinuousScroll", () => {
     });
 
     expect(didPrime).toBe(true);
-    expect(calls).toEqual([[0, 1200]]);
+    expect(calls).toEqual([[0, 1600]]);
   });
 
   it("reports unsupported when the rendition has no continuous manager check hook", async () => {
     await expect(primeContinuousScroll({})).resolves.toBe(false);
+  });
+
+  it("treats a busy continuous manager as unsupported instead of throwing", async () => {
+    await expect(
+      primeContinuousScroll({
+        manager: {
+          check() {
+            return Promise.reject(new Error("manager is busy"));
+          }
+        }
+      })
+    ).resolves.toBe(false);
   });
 });
