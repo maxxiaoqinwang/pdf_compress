@@ -139,6 +139,10 @@ export function Reader({ file, onClose }: ReaderProps) {
     setTheme((value) => (value === "paper" ? "night" : "paper"));
   }
 
+  function toggleReadingMode() {
+    setReadingMode((value) => (value === "scroll" ? "page" : "scroll"));
+  }
+
   return (
     <section className={`reader-shell ${theme} ${readingMode}`} aria-label="EPUB reader">
       <header className="reader-topbar">
@@ -169,6 +173,9 @@ export function Reader({ file, onClose }: ReaderProps) {
         </button>
         <button type="button" onClick={() => setActiveSheet("settings")}>
           Aa
+        </button>
+        <button type="button" onClick={toggleReadingMode}>
+          {readingMode === "scroll" ? "滚动" : "分页"}
         </button>
         <button type="button" onClick={toggleTheme}>
           {theme === "paper" ? "夜间" : "日间"}
