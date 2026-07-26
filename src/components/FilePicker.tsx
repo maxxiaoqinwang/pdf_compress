@@ -44,7 +44,7 @@ export function FilePicker({ onFileSelected }: FilePickerProps) {
           ref={inputRef}
           className="hidden-input"
           type="file"
-          accept=".epub,application/epub+zip,application/zip"
+          accept=".epub,.tks,application/epub+zip,application/zip"
           onChange={handleFileChange}
         />
       </div>

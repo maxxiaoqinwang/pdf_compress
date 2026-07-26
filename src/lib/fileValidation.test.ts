@@ -10,6 +10,10 @@ describe("validateEpubFile", () => {
     expect(validateEpubFile(makeFile("novel.epub"))).toEqual({ ok: true });
   });
 
+  it("accepts tks files as epub-compatible containers", () => {
+    expect(validateEpubFile(makeFile("archive.tks"))).toEqual({ ok: true });
+  });
+
   it("accepts files with the epub MIME type", () => {
     expect(validateEpubFile(makeFile("download", "application/epub+zip"))).toEqual({
       ok: true
