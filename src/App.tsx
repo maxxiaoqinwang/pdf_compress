@@ -1,11 +1,15 @@
+import { useState } from "react";
+import { FilePicker } from "./components/FilePicker";
+import { Reader } from "./components/Reader";
+import { WechatNotice } from "./components/WechatNotice";
+
 export default function App() {
+  const [file, setFile] = useState<File | null>(null);
+
   return (
     <main className="app-shell">
-      <section className="intro-panel">
-        <p className="eyebrow">Personal EPUB Reader</p>
-        <h1>EPUB Reader</h1>
-        <p>Open this page in WeChat, choose an EPUB, and read it locally in your browser.</p>
-      </section>
+      <WechatNotice />
+      {file ? <Reader file={file} onClose={() => setFile(null)} /> : <FilePicker onFileSelected={setFile} />}
     </main>
   );
 }
