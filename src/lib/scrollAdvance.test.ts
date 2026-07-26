@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getNextSpineIndex, isNearScrollEnd } from "./scrollAdvance";
+import { isNearScrollEnd, primeContinuousScroll } from "./scrollAdvance";
 
 describe("isNearScrollEnd", () => {
   it("detects when a scroller is near the bottom", () => {
@@ -15,16 +15,24 @@ describe("isNearScrollEnd", () => {
   });
 });
 
-describe("getNextSpineIndex", () => {
-  it("uses location.start.index from epub.js relocated events", () => {
-    expect(getNextSpineIndex({ start: { index: 7 } })).toBe(8);
+describe("primeContinuousScroll", () => {
+  it("asks epub.js continuous manager to append nearby sections without changing display target", async () => {
+    const calls: Array<[number, number]> = [];
+
+    const didPrime = await primeContinuousScroll({
+      manager: {
+        check(offsetLeft: number, offsetTop: number) {
+          calls.push([offsetLeft, offsetTop]);
+          return Promise.resolve();
+        }
+      }
+    });
+
+    expect(didPrime).toBe(true);
+    expect(calls).toEqual([[0, 1200]]);
   });
 
-  it("uses direct location.index when available", () => {
-    expect(getNextSpineIndex({ index: 3 })).toBe(4);
-  });
-
-  it("returns null when no usable index is available", () => {
-    expect(getNextSpineIndex({ start: {} })).toBeNull();
+  it("reports unsupported when the rendition has no continuous manager check hook", async () => {
+    await expect(primeContinuousScroll({})).resolves.toBe(false);
   });
 });

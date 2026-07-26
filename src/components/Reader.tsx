@@ -9,7 +9,7 @@ import {
 } from "../lib/storage";
 import { formatReadingModeLabel } from "../lib/readerLabels";
 import { getRenditionOptions } from "../lib/renditionOptions";
-import { getNextSpineIndex, isNearScrollEnd } from "../lib/scrollAdvance";
+import { isNearScrollEnd, primeContinuousScroll } from "../lib/scrollAdvance";
 
 type ReaderProps = {
   file: File;
@@ -251,25 +251,22 @@ function attachScrollAutoAdvance(hostElement: HTMLElement, rendition: Rendition)
   let touchStartY: number | null = null;
 
   async function advanceIfNeeded() {
-    if (locked || !isNearScrollEnd(scrollElement)) {
+    if (locked || !isNearScrollEnd(scrollElement, 480)) {
       return;
     }
 
     locked = true;
     try {
-      const location = await Promise.resolve(rendition.currentLocation() as unknown);
-      const nextIndex = getNextSpineIndex(location);
-      if (nextIndex === null) {
+      const didPrime = await primeContinuousScroll(rendition);
+      if (!didPrime) {
         await rendition.next();
-      } else {
-        await rendition.display(nextIndex);
       }
     } catch {
       await rendition.next();
     } finally {
       window.setTimeout(() => {
         locked = false;
-      }, 450);
+      }, 250);
     }
   }
 

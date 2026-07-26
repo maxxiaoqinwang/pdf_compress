@@ -8,27 +8,23 @@ export function isNearScrollEnd(scroller: ScrollMetrics, threshold = 96): boolea
   return scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - threshold;
 }
 
-export function getNextSpineIndex(location: unknown): number | null {
-  if (!location || typeof location !== "object") {
-    return null;
+type ContinuousManagerLike = {
+  check?: (this: ContinuousManagerLike, offsetLeft: number, offsetTop: number) => Promise<unknown>;
+};
+
+type ContinuousRenditionLike = {
+  manager?: ContinuousManagerLike;
+};
+
+export async function primeContinuousScroll(
+  rendition: unknown,
+  offsetTop = 1200
+): Promise<boolean> {
+  const manager = (rendition as ContinuousRenditionLike).manager;
+  if (!manager || typeof manager.check !== "function") {
+    return false;
   }
 
-  const candidate = location as {
-    index?: unknown;
-    start?: {
-      index?: unknown;
-    };
-  };
-
-  const directIndex = candidate.index;
-  if (typeof directIndex === "number") {
-    return directIndex + 1;
-  }
-
-  const startIndex = candidate.start?.index;
-  if (typeof startIndex === "number") {
-    return startIndex + 1;
-  }
-
-  return null;
+  await manager.check.call(manager, 0, offsetTop);
+  return true;
 }
