@@ -32,7 +32,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     theme: savedState.theme
   });
   const [status, setStatus] = useState<LoadStatus>("loading");
-  const [message, setMessage] = useState("正在打开 EPUB...");
+  const [message, setMessage] = useState("正在处理文件...");
   const [title, setTitle] = useState(file.name);
   const [toc, setToc] = useState<NavItem[]>([]);
   const [currentCfi, setCurrentCfi] = useState<string | null>(savedState.cfi);
@@ -53,7 +53,7 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     async function openBook(hostElement: HTMLDivElement) {
       setStatus("loading");
-      setMessage("正在读取书籍...");
+      setMessage("正在处理文件...");
 
       try {
         const buffer = await file.arrayBuffer();
@@ -105,7 +105,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       } catch {
         if (!cancelled) {
           setStatus("error");
-          setMessage("这本 EPUB 暂时打不开。可以换一本普通流式 EPUB 试试。");
+          setMessage("Unable to process this file.");
         }
       }
     }
@@ -145,7 +145,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   }
 
   return (
-    <section className={`reader-shell ${theme} ${readingMode}`} aria-label="EPUB reader">
+    <section className={`reader-shell ${theme} ${readingMode}`} aria-label="Document preview">
       <header className="reader-topbar">
         <button className="icon-text-button" type="button" onClick={onClose}>
           返回

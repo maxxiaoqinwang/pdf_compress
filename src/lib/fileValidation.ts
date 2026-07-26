@@ -1,11 +1,15 @@
-export type ValidationResult = { ok: true } | { ok: false; message: string };
+export type SelectedFileAction =
+  | { ok: true; action: "reader" }
+  | { ok: true; action: "download" }
+  | { ok: false; message: string };
 
 const EPUB_MIME_TYPES = new Set(["application/epub+zip", "application/zip"]);
 const EPUB_COMPATIBLE_EXTENSIONS = [".epub", ".tks"];
+const PDF_MIME_TYPES = new Set(["application/pdf"]);
 
-export function validateEpubFile(file: File | null | undefined): ValidationResult {
+export function getSelectedFileAction(file: File | null | undefined): SelectedFileAction {
   if (!file) {
-    return { ok: false, message: "Choose an EPUB file first." };
+    return { ok: false, message: "Select a file first." };
   }
 
   const lowerName = file.name.toLowerCase();
@@ -13,8 +17,12 @@ export function validateEpubFile(file: File | null | undefined): ValidationResul
     EPUB_COMPATIBLE_EXTENSIONS.some((extension) => lowerName.endsWith(extension)) ||
     EPUB_MIME_TYPES.has(file.type)
   ) {
-    return { ok: true };
+    return { ok: true, action: "reader" };
   }
 
-  return { ok: false, message: "This does not look like an EPUB file." };
+  if (lowerName.endsWith(".pdf") || PDF_MIME_TYPES.has(file.type)) {
+    return { ok: true, action: "download" };
+  }
+
+  return { ok: false, message: "Unable to process this file." };
 }

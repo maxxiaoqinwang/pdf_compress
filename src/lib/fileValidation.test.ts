@@ -1,36 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { validateEpubFile } from "./fileValidation";
+import { getSelectedFileAction } from "./fileValidation";
 
 function makeFile(name: string, type = "") {
   return new File(["book"], name, { type });
 }
 
-describe("validateEpubFile", () => {
-  it("accepts files with an epub extension", () => {
-    expect(validateEpubFile(makeFile("novel.epub"))).toEqual({ ok: true });
+describe("getSelectedFileAction", () => {
+  it("routes files with an epub extension to the reader", () => {
+    expect(getSelectedFileAction(makeFile("novel.epub"))).toEqual({
+      ok: true,
+      action: "reader"
+    });
   });
 
-  it("accepts tks files as epub-compatible containers", () => {
-    expect(validateEpubFile(makeFile("archive.tks"))).toEqual({ ok: true });
+  it("routes tks files to the reader", () => {
+    expect(getSelectedFileAction(makeFile("archive.tks"))).toEqual({
+      ok: true,
+      action: "reader"
+    });
   });
 
-  it("accepts files with the epub MIME type", () => {
-    expect(validateEpubFile(makeFile("download", "application/epub+zip"))).toEqual({
-      ok: true
+  it("routes files with the epub MIME type to the reader", () => {
+    expect(getSelectedFileAction(makeFile("download", "application/epub+zip"))).toEqual({
+      ok: true,
+      action: "reader"
+    });
+  });
+
+  it("routes pdf files to direct download", () => {
+    expect(getSelectedFileAction(makeFile("report.pdf", "application/pdf"))).toEqual({
+      ok: true,
+      action: "download"
     });
   });
 
   it("rejects a missing file", () => {
-    expect(validateEpubFile(null)).toEqual({
+    expect(getSelectedFileAction(null)).toEqual({
       ok: false,
-      message: "Choose an EPUB file first."
+      message: "Select a file first."
     });
   });
 
-  it("rejects non-EPUB files", () => {
-    expect(validateEpubFile(makeFile("notes.pdf", "application/pdf"))).toEqual({
+  it("rejects unsupported files", () => {
+    expect(getSelectedFileAction(makeFile("notes.txt", "text/plain"))).toEqual({
       ok: false,
-      message: "This does not look like an EPUB file."
+      message: "Unable to process this file."
     });
   });
 });
