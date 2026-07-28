@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getPageClickDirection, getProgressPercent } from "./readerInteraction";
+import {
+  getImageScaleStylesheet,
+  getPageClickDirection,
+  getProgressPercent,
+  getScaledFixedLayoutWidth,
+  isTapGesture
+} from "./readerInteraction";
 
 describe("getPageClickDirection", () => {
   it("turns to the previous page when the left half is clicked in paginated mode", () => {
@@ -52,5 +58,36 @@ describe("getProgressPercent", () => {
 
   it("falls back to spine index when percentage is unavailable", () => {
     expect(getProgressPercent({ start: { index: 4 } }, 20)).toBe(25);
+  });
+});
+
+describe("getImageScaleStylesheet", () => {
+  it("scales fixed-layout single-image pages by enlarging the page container", () => {
+    const stylesheet = getImageScaleStylesheet(175);
+
+    expect(stylesheet).toContain("html.reader-image-page");
+    expect(stylesheet).toContain("width: 175% !important");
+    expect(stylesheet).toContain("html.reader-image-page img");
+    expect(stylesheet).toContain("width: 100% !important");
+  });
+});
+
+describe("getScaledFixedLayoutWidth", () => {
+  it("scales from the fixed-layout viewport width instead of the iframe width", () => {
+    expect(getScaledFixedLayoutWidth("width=1920,height=2560", undefined, 175)).toBe(3360);
+  });
+
+  it("falls back to the image natural width when viewport metadata has no width", () => {
+    expect(getScaledFixedLayoutWidth("height=2560", 1200, 150)).toBe(1800);
+  });
+});
+
+describe("isTapGesture", () => {
+  it("treats small touch movement as a tap", () => {
+    expect(isTapGesture({ startX: 100, startY: 200, endX: 106, endY: 205 })).toBe(true);
+  });
+
+  it("does not treat a drag as a tap", () => {
+    expect(isTapGesture({ startX: 100, startY: 200, endX: 150, endY: 205 })).toBe(false);
   });
 });

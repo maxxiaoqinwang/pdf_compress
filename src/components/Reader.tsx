@@ -8,7 +8,13 @@ import {
   type ReaderTheme,
   type ReadingMode
 } from "../lib/storage";
-import { getPageClickDirection, getProgressPercent } from "../lib/readerInteraction";
+import {
+  getImageScaleStylesheet,
+  getPageClickDirection,
+  getProgressPercent,
+  getScaledFixedLayoutWidth,
+  isTapGesture
+} from "../lib/readerInteraction";
 import { formatReadingModeLabel } from "../lib/readerLabels";
 import { getRenditionOptions } from "../lib/renditionOptions";
 import { primeContinuousScroll } from "../lib/scrollAdvance";
@@ -437,29 +443,32 @@ function getRenderedContents(rendition: Rendition): Contents[] {
 }
 
 function applyImageScaleToContent(contents: Contents, imageScale: number) {
-  const scale = Math.min(250, Math.max(100, Math.round(imageScale)));
-  const cursor = scale > 100 ? "grab" : "auto";
-  contents.addStylesheetCss(
-    `
-      html, body {
-        overflow: auto !important;
-        touch-action: pan-x pan-y !important;
-      }
-      img {
-        display: block !important;
-        max-width: none !important;
-        width: ${scale}% !important;
-        height: auto !important;
-        margin-right: auto !important;
-        margin-left: auto !important;
-        cursor: ${cursor} !important;
-        user-select: none !important;
-        -webkit-user-drag: none !important;
-        touch-action: pan-x pan-y !important;
-      }
-    `,
-    "reader-image-scale"
-  );
+  markSingleImagePage(contents, imageScale);
+  contents.addStylesheetCss(getImageScaleStylesheet(imageScale), "reader-image-scale");
+}
+
+function markSingleImagePage(contents: Contents, imageScale: number) {
+  const doc = contents.document;
+  const body = doc.body;
+  if (!body) {
+    return;
+  }
+
+  const images = body.querySelectorAll("img");
+  const meaningfulText = body.textContent?.replace(/\s+/g, "") ?? "";
+  const isSingleImagePage = images.length === 1 && meaningfulText.length === 0;
+  doc.documentElement.classList.toggle("reader-image-page", isSingleImagePage);
+
+  if (!isSingleImagePage) {
+    doc.documentElement.style.removeProperty("--reader-fixed-layout-width");
+    return;
+  }
+
+  const viewportContent = doc.querySelector("meta[name='viewport']")?.getAttribute("content");
+  const scaledWidth = getScaledFixedLayoutWidth(viewportContent, images[0].naturalWidth, imageScale);
+  if (scaledWidth) {
+    doc.documentElement.style.setProperty("--reader-fixed-layout-width", `${scaledWidth}px`);
+  }
 }
 
 function installContentPointerBehavior(
@@ -480,6 +489,23 @@ function installContentPointerBehavior(
   let didDrag = false;
   let lastX = 0;
   let lastY = 0;
+  let touchStart: { x: number; y: number } | null = null;
+  let suppressNextClick = false;
+
+  const turnFromClientX = (clientX: number) => {
+    const direction = getPageClickDirection({
+      readingMode: settingsRef.current.readingMode,
+      clientX,
+      boundsLeft: 0,
+      boundsWidth: contents.window.innerWidth || contents.documentElement.clientWidth
+    });
+    if (!direction) {
+      return false;
+    }
+
+    void (direction === "next" ? rendition.next() : rendition.prev()).then(onPageTurn);
+    return true;
+  };
 
   doc.addEventListener(
     "mousedown",
@@ -524,8 +550,58 @@ function installContentPointerBehavior(
   doc.addEventListener("mouseleave", stopDrag, true);
 
   doc.addEventListener(
+    "touchstart",
+    (event) => {
+      if (event.touches.length !== 1 || isInteractiveTarget(event.target)) {
+        touchStart = null;
+        return;
+      }
+
+      const touch = event.touches[0];
+      touchStart = { x: touch.clientX, y: touch.clientY };
+    },
+    true
+  );
+
+  doc.addEventListener(
+    "touchend",
+    (event) => {
+      const touch = event.changedTouches[0];
+      if (!touchStart || !touch || settingsRef.current.readingMode !== "page") {
+        touchStart = null;
+        return;
+      }
+
+      const wasTap = isTapGesture({
+        startX: touchStart.x,
+        startY: touchStart.y,
+        endX: touch.clientX,
+        endY: touch.clientY
+      });
+      touchStart = null;
+      if (!wasTap || !turnFromClientX(touch.clientX)) {
+        return;
+      }
+
+      suppressNextClick = true;
+      contents.window.setTimeout(() => {
+        suppressNextClick = false;
+      }, 450);
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+
+  doc.addEventListener(
     "click",
     (event) => {
+      if (suppressNextClick) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (didDrag) {
         didDrag = false;
         event.preventDefault();
@@ -537,19 +613,12 @@ function installContentPointerBehavior(
         return;
       }
 
-      const direction = getPageClickDirection({
-        readingMode: settingsRef.current.readingMode,
-        clientX: event.clientX,
-        boundsLeft: 0,
-        boundsWidth: contents.window.innerWidth || contents.documentElement.clientWidth
-      });
-      if (!direction) {
+      if (!turnFromClientX(event.clientX)) {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
-      void (direction === "next" ? rendition.next() : rendition.prev()).then(onPageTurn);
     },
     true
   );
