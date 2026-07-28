@@ -157,6 +157,38 @@ h1 {
   background: rgba(23, 22, 19, 0.96);
 }
 
+.reader-progress {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(72, 60, 44, 0.12);
+  background: rgba(72, 60, 44, 0.08);
+}
+
+.reader-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2f5d50, #d7b56d);
+  transition: width 180ms ease;
+}
+
+.reader-progress span {
+  position: absolute;
+  right: 8px;
+  top: 7px;
+  color: #867560;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.night .reader-progress {
+  border-bottom-color: rgba(231, 224, 213, 0.1);
+  background: rgba(231, 224, 213, 0.08);
+}
+
+.night .reader-progress span {
+  color: #b9ab98;
+}
+
 .book-title {
   min-width: 0;
 }
@@ -209,8 +241,8 @@ h1 {
 
 .reader-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  min-height: calc(100vh - 174px);
+  grid-template-columns: minmax(0, 1fr);
+  min-height: calc(100vh - 180px);
 }
 
 .toc-panel {
@@ -255,12 +287,12 @@ h1 {
 .reader-stage {
   position: relative;
   min-width: 0;
-  min-height: calc(100vh - 174px);
+  min-height: calc(100vh - 180px);
 }
 
 .rendition-root {
   width: 100%;
-  height: calc(100vh - 174px);
+  height: calc(100vh - 180px);
 }
 
 .bottom-toolbar {
@@ -427,7 +459,7 @@ h1 {
 
   .reader-layout {
     grid-template-columns: 1fr;
-    min-height: calc(100dvh - 112px - env(safe-area-inset-bottom));
+    min-height: calc(100dvh - 118px - env(safe-area-inset-bottom));
   }
 
   .toc-panel.desktop {
@@ -436,8 +468,8 @@ h1 {
 
   .reader-stage,
   .rendition-root {
-    min-height: calc(100dvh - 112px - env(safe-area-inset-bottom));
-    height: calc(100dvh - 112px - env(safe-area-inset-bottom));
+    min-height: calc(100dvh - 118px - env(safe-area-inset-bottom));
+    height: calc(100dvh - 118px - env(safe-area-inset-bottom));
   }
 
   .bottom-toolbar {
@@ -461,6 +493,15 @@ h1 {
 
 @media (min-width: 761px) {
   .sheet-backdrop {
-    display: none;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .reader-sheet {
+    width: min(380px, 86vw);
+    max-height: none;
+    height: 100%;
+    border-radius: 0 16px 16px 0;
+    box-shadow: 18px 0 40px rgba(0, 0, 0, 0.22);
   }
 }

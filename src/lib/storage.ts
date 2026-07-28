@@ -4,6 +4,7 @@ export type ReadingMode = "scroll" | "page";
 export type ReaderState = {
   cfi: string | null;
   fontScale: number;
+  imageScale: number;
   lineHeight: number;
   readingMode: ReadingMode;
   theme: ReaderTheme;
@@ -14,6 +15,7 @@ const STORAGE_KEY = "epub-reader-state";
 export const DEFAULT_READER_STATE: ReaderState = {
   cfi: null,
   fontScale: 100,
+  imageScale: 100,
   lineHeight: 175,
   readingMode: "scroll",
   theme: "paper"
@@ -30,6 +32,7 @@ export function loadReaderState(): ReaderState {
     return {
       cfi: typeof parsed.cfi === "string" ? parsed.cfi : null,
       fontScale: normalizeFontScale(parsed.fontScale),
+      imageScale: normalizeImageScale(parsed.imageScale),
       lineHeight: normalizeLineHeight(parsed.lineHeight),
       readingMode: parsed.readingMode === "page" ? "page" : "scroll",
       theme: parsed.theme === "night" ? "night" : "paper"
@@ -45,6 +48,7 @@ export function saveReaderState(state: ReaderState): void {
     JSON.stringify({
       cfi: state.cfi,
       fontScale: normalizeFontScale(state.fontScale),
+      imageScale: normalizeImageScale(state.imageScale),
       lineHeight: normalizeLineHeight(state.lineHeight),
       readingMode: state.readingMode === "page" ? "page" : "scroll",
       theme: state.theme
@@ -66,4 +70,12 @@ function normalizeLineHeight(value: unknown): number {
   }
 
   return Math.min(220, Math.max(140, Math.round(value)));
+}
+
+function normalizeImageScale(value: unknown): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return DEFAULT_READER_STATE.imageScale;
+  }
+
+  return Math.min(250, Math.max(100, Math.round(value)));
 }

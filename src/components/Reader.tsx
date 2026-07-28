@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ePub from "epubjs";
-import type { Book, Location, NavItem, Rendition } from "epubjs";
+import type { Book, Contents, Location, NavItem, Rendition } from "epubjs";
 import {
   loadReaderState,
   saveReaderState,
+  type ReaderState,
   type ReaderTheme,
   type ReadingMode
 } from "../lib/storage";
+import { getPageClickDirection, getProgressPercent } from "../lib/readerInteraction";
 import { formatReadingModeLabel } from "../lib/readerLabels";
 import { getRenditionOptions } from "../lib/renditionOptions";
 import { primeContinuousScroll } from "../lib/scrollAdvance";
@@ -18,6 +20,7 @@ type ReaderProps = {
 
 type LoadStatus = "loading" | "ready" | "error";
 type ReaderSheet = "toc" | "settings" | null;
+type ReaderSettings = Omit<ReaderState, "cfi">;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -25,8 +28,9 @@ export function Reader({ file, onClose }: ReaderProps) {
   const renditionRef = useRef<Rendition | null>(null);
   const savedState = useMemo(() => loadReaderState(), []);
   const restoreCfiRef = useRef<string | null>(savedState.cfi);
-  const latestSettingsRef = useRef({
+  const latestSettingsRef = useRef<ReaderSettings>({
     fontScale: savedState.fontScale,
+    imageScale: savedState.imageScale,
     lineHeight: savedState.lineHeight,
     readingMode: savedState.readingMode,
     theme: savedState.theme
@@ -37,12 +41,14 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [toc, setToc] = useState<NavItem[]>([]);
   const [currentCfi, setCurrentCfi] = useState<string | null>(savedState.cfi);
   const [fontScale, setFontScale] = useState(savedState.fontScale);
+  const [imageScale, setImageScale] = useState(savedState.imageScale);
   const [lineHeight, setLineHeight] = useState(savedState.lineHeight);
   const [readingMode, setReadingMode] = useState<ReadingMode>(savedState.readingMode);
   const [theme, setTheme] = useState<ReaderTheme>(savedState.theme);
   const [activeSheet, setActiveSheet] = useState<ReaderSheet>(null);
+  const [progressPercent, setProgressPercent] = useState(0);
 
-  latestSettingsRef.current = { fontScale, lineHeight, readingMode, theme };
+  latestSettingsRef.current = { fontScale, imageScale, lineHeight, readingMode, theme };
 
   useEffect(() => {
     let cancelled = false;
@@ -66,8 +72,11 @@ export function Reader({ file, onClose }: ReaderProps) {
 
         bookRef.current = book;
         renditionRef.current = rendition;
+        registerContentEnhancements(rendition, latestSettingsRef, () =>
+          updateReaderProgress(hostElement, rendition, setProgressPercent, getSpineItemCount(book))
+        );
         registerThemes(rendition);
-        applyReaderStyle(rendition, theme, fontScale, lineHeight);
+        applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale);
 
         const [metadata, navigation] = await Promise.all([
           book.loaded.metadata,
@@ -86,6 +95,10 @@ export function Reader({ file, onClose }: ReaderProps) {
           const latest = latestSettingsRef.current;
           restoreCfiRef.current = cfi;
           setCurrentCfi(cfi);
+          setProgressPercent(
+            getProgressPercent(location, getSpineItemCount(book)) ||
+              getProgressFromRenderedViews(hostElement, getSpineItemCount(book))
+          );
           saveReaderState({ cfi, ...latest });
         });
 
@@ -94,6 +107,7 @@ export function Reader({ file, onClose }: ReaderProps) {
         } catch {
           await rendition.display();
         }
+        updateReaderProgress(hostElement, rendition, setProgressPercent, getSpineItemCount(book));
         if (readingMode === "scroll") {
           void primeContinuousScroll(rendition);
         }
@@ -127,12 +141,18 @@ export function Reader({ file, onClose }: ReaderProps) {
       return;
     }
 
-    applyReaderStyle(rendition, theme, fontScale, lineHeight);
-    saveReaderState({ cfi: currentCfi, fontScale, lineHeight, readingMode, theme });
-  }, [currentCfi, fontScale, lineHeight, readingMode, theme]);
+    applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale);
+    saveReaderState({ cfi: currentCfi, fontScale, imageScale, lineHeight, readingMode, theme });
+  }, [currentCfi, fontScale, imageScale, lineHeight, readingMode, theme]);
 
   async function goToChapter(href: string) {
     await renditionRef.current?.display(href);
+    updateReaderProgress(
+      mountRef.current,
+      renditionRef.current,
+      setProgressPercent,
+      getSpineItemCount(bookRef.current)
+    );
     setActiveSheet(null);
   }
 
@@ -142,6 +162,41 @@ export function Reader({ file, onClose }: ReaderProps) {
 
   function toggleReadingMode() {
     setReadingMode((value) => (value === "scroll" ? "page" : "scroll"));
+  }
+
+  async function turnPage(direction: "prev" | "next") {
+    const rendition = renditionRef.current;
+    if (!rendition) {
+      return;
+    }
+
+    if (direction === "next") {
+      await rendition.next();
+    } else {
+      await rendition.prev();
+    }
+
+    updateReaderProgress(mountRef.current, rendition, setProgressPercent, getSpineItemCount(bookRef.current));
+  }
+
+  function handleStageClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.defaultPrevented || activeSheet || status !== "ready") {
+      return;
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const direction = getPageClickDirection({
+      readingMode,
+      clientX: event.clientX,
+      boundsLeft: bounds.left,
+      boundsWidth: bounds.width
+    });
+
+    if (!direction) {
+      return;
+    }
+
+    void turnPage(direction);
   }
 
   return (
@@ -155,11 +210,20 @@ export function Reader({ file, onClose }: ReaderProps) {
           <strong>{title}</strong>
         </div>
       </header>
+      <div
+        className="reader-progress"
+        role="progressbar"
+        aria-label="阅读进度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progressPercent}
+      >
+        <div className="reader-progress-fill" style={{ width: `${progressPercent}%` }} />
+        <span>{progressPercent}%</span>
+      </div>
 
       <div className="reader-layout">
-        <TocPanel toc={toc} onSelect={(href) => void goToChapter(href)} variant="desktop" />
-
-        <div className="reader-stage">
+        <div className="reader-stage" onClick={handleStageClick}>
           {status !== "ready" ? <div className={`reader-message ${status}`}>{message}</div> : null}
           <div ref={mountRef} className="rendition-root" />
         </div>
@@ -169,7 +233,7 @@ export function Reader({ file, onClose }: ReaderProps) {
         <button type="button" onClick={() => setActiveSheet("toc")}>
           目录
         </button>
-        <button type="button" onClick={() => void renditionRef.current?.prev()}>
+        <button type="button" onClick={() => void turnPage("prev")}>
           上章
         </button>
         <button type="button" onClick={() => setActiveSheet("settings")}>
@@ -181,7 +245,7 @@ export function Reader({ file, onClose }: ReaderProps) {
         <button type="button" onClick={toggleTheme}>
           {theme === "paper" ? "夜间" : "日间"}
         </button>
-        <button type="button" onClick={() => void renditionRef.current?.next()}>
+        <button type="button" onClick={() => void turnPage("next")}>
           下章
         </button>
       </nav>
@@ -204,6 +268,12 @@ export function Reader({ file, onClose }: ReaderProps) {
                   value={`${fontScale}%`}
                   onDecrease={() => setFontScale((value) => Math.max(80, value - 10))}
                   onIncrease={() => setFontScale((value) => Math.min(160, value + 10))}
+                />
+                <SettingStepper
+                  label="图片"
+                  value={`${imageScale}%`}
+                  onDecrease={() => setImageScale((value) => Math.max(100, value - 25))}
+                  onIncrease={() => setImageScale((value) => Math.min(250, value + 25))}
                 />
                 <SettingStepper
                   label="行距"
@@ -291,6 +361,229 @@ function SettingStepper({ label, value, onDecrease, onIncrease }: SettingStepper
   );
 }
 
+function registerContentEnhancements(
+  rendition: Rendition,
+  settingsRef: { current: ReaderSettings },
+  onPageTurn: () => void
+) {
+  rendition.hooks.content.register((contents: Contents) => {
+    applyImageScaleToContent(contents, settingsRef.current.imageScale);
+    installContentPointerBehavior(contents, rendition, settingsRef, onPageTurn);
+  });
+}
+
+function updateReaderProgress(
+  hostElement: HTMLElement | null,
+  rendition: Rendition | null,
+  setProgressPercent: (value: number) => void,
+  spineItemCount?: number
+) {
+  if (!rendition) {
+    return;
+  }
+
+  void Promise.resolve(rendition.currentLocation() as unknown).then((location) => {
+    setProgressPercent(
+      getProgressPercent(location, spineItemCount) ||
+        getProgressFromRenderedViews(hostElement, spineItemCount)
+    );
+  });
+}
+
+function getProgressFromRenderedViews(
+  hostElement: HTMLElement | null,
+  spineItemCount?: number
+): number {
+  if (!hostElement || !spineItemCount || spineItemCount <= 0) {
+    return 0;
+  }
+
+  const renderedIndexes = Array.from(hostElement.querySelectorAll<HTMLElement>(".epub-view"))
+    .map((view) => Number(view.getAttribute("ref")))
+    .filter((index) => Number.isFinite(index));
+
+  if (renderedIndexes.length === 0) {
+    return 0;
+  }
+
+  const firstVisibleIndex = Math.min(...renderedIndexes);
+  return getProgressPercent({ start: { index: firstVisibleIndex } }, spineItemCount);
+}
+
+function getSpineItemCount(book: Book | null): number | undefined {
+  if (!book) {
+    return undefined;
+  }
+
+  const spine = (book as unknown as { spine?: { items?: unknown[] } }).spine;
+  return Array.isArray(spine?.items) ? spine.items.length : undefined;
+}
+
+function applyImageScaleToRenderedContents(rendition: Rendition, imageScale: number) {
+  getRenderedContents(rendition).forEach((contents) => applyImageScaleToContent(contents, imageScale));
+}
+
+function getRenderedContents(rendition: Rendition): Contents[] {
+  try {
+    const contents = rendition.getContents() as unknown;
+    if (Array.isArray(contents)) {
+      return contents.filter(Boolean) as Contents[];
+    }
+
+    return contents ? [contents as Contents] : [];
+  } catch {
+    return [];
+  }
+}
+
+function applyImageScaleToContent(contents: Contents, imageScale: number) {
+  const scale = Math.min(250, Math.max(100, Math.round(imageScale)));
+  const cursor = scale > 100 ? "grab" : "auto";
+  contents.addStylesheetCss(
+    `
+      html, body {
+        overflow: auto !important;
+        touch-action: pan-x pan-y !important;
+      }
+      img {
+        display: block !important;
+        max-width: none !important;
+        width: ${scale}% !important;
+        height: auto !important;
+        margin-right: auto !important;
+        margin-left: auto !important;
+        cursor: ${cursor} !important;
+        user-select: none !important;
+        -webkit-user-drag: none !important;
+        touch-action: pan-x pan-y !important;
+      }
+    `,
+    "reader-image-scale"
+  );
+}
+
+function installContentPointerBehavior(
+  contents: Contents,
+  rendition: Rendition,
+  settingsRef: { current: ReaderSettings },
+  onPageTurn: () => void
+) {
+  const doc = contents.document as Document & {
+    __readerPointerBehaviorInstalled?: boolean;
+  };
+  if (!doc || doc.__readerPointerBehaviorInstalled) {
+    return;
+  }
+  doc.__readerPointerBehaviorInstalled = true;
+
+  let isDragging = false;
+  let didDrag = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  doc.addEventListener(
+    "mousedown",
+    (event) => {
+      if (settingsRef.current.imageScale <= 100 || !isImageEventTarget(event.target)) {
+        return;
+      }
+
+      isDragging = true;
+      didDrag = false;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      event.preventDefault();
+    },
+    true
+  );
+
+  doc.addEventListener(
+    "mousemove",
+    (event) => {
+      if (!isDragging) {
+        return;
+      }
+
+      const deltaX = event.clientX - lastX;
+      const deltaY = event.clientY - lastY;
+      if (Math.abs(deltaX) + Math.abs(deltaY) > 3) {
+        didDrag = true;
+      }
+      contents.window.scrollBy(-deltaX, -deltaY);
+      lastX = event.clientX;
+      lastY = event.clientY;
+      event.preventDefault();
+    },
+    true
+  );
+
+  const stopDrag = () => {
+    isDragging = false;
+  };
+  doc.addEventListener("mouseup", stopDrag, true);
+  doc.addEventListener("mouseleave", stopDrag, true);
+
+  doc.addEventListener(
+    "click",
+    (event) => {
+      if (didDrag) {
+        didDrag = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (isInteractiveTarget(event.target) || settingsRef.current.readingMode !== "page") {
+        return;
+      }
+
+      const direction = getPageClickDirection({
+        readingMode: settingsRef.current.readingMode,
+        clientX: event.clientX,
+        boundsLeft: 0,
+        boundsWidth: contents.window.innerWidth || contents.documentElement.clientWidth
+      });
+      if (!direction) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      void (direction === "next" ? rendition.next() : rendition.prev()).then(onPageTurn);
+    },
+    true
+  );
+}
+
+function isImageEventTarget(target: EventTarget | null): boolean {
+  const element = asClosestElement(target);
+  if (!element) {
+    return false;
+  }
+
+  return element.nodeName?.toLowerCase() === "img" || Boolean(element.closest("img"));
+}
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return Boolean(
+    asClosestElement(target)?.closest("a, button, input, select, textarea, summary, [role='button']")
+  );
+}
+
+type ClosestElementLike = {
+  nodeName?: string;
+  closest: (selector: string) => Element | null;
+};
+
+function asClosestElement(target: EventTarget | null): ClosestElementLike | null {
+  if (!target || typeof target !== "object") {
+    return null;
+  }
+
+  const candidate = target as Partial<ClosestElementLike>;
+  return typeof candidate.closest === "function" ? (candidate as ClosestElementLike) : null;
+}
+
 function registerThemes(rendition: Rendition) {
   rendition.themes.register("paper", {
     body: {
@@ -328,9 +621,11 @@ function applyReaderStyle(
   rendition: Rendition,
   theme: ReaderTheme,
   fontScale: number,
-  lineHeight: number
+  lineHeight: number,
+  imageScale: number
 ) {
   rendition.themes.select(theme);
   rendition.themes.fontSize(`${fontScale}%`);
   rendition.themes.override("line-height", `${lineHeight}%`);
+  applyImageScaleToRenderedContents(rendition, imageScale);
 }
