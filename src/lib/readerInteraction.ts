@@ -112,6 +112,18 @@ export function getScrollImagePageViewHeight(
   return Math.ceil(imageHeight);
 }
 
+export function getPageImageFrameHeight(
+  readingMode: ReadingMode,
+  isSingleImagePage: boolean,
+  pageHeight: number
+): number | null {
+  if (readingMode !== "page" || !isSingleImagePage || !Number.isFinite(pageHeight) || pageHeight <= 0) {
+    return null;
+  }
+
+  return Math.ceil(pageHeight);
+}
+
 export function getProgressPercent(location: unknown, spineItemCount?: number): number {
   const percentage = readPercentage(location);
   if (percentage !== null) {

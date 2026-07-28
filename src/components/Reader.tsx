@@ -10,6 +10,7 @@ import {
 } from "../lib/storage";
 import {
   getImageScaleStylesheet,
+  getPageImageFrameHeight,
   getPageClickDirection,
   getProgressPercent,
   getScrollImagePageViewHeight,
@@ -489,15 +490,26 @@ function syncSingleImageViewHeight(
   const applyHeight = () => {
     const image = contents.document.querySelector("img");
     const imageHeight = image?.getBoundingClientRect().height ?? 0;
-    const viewHeight = getScrollImagePageViewHeight(readingMode, isSingleImagePage, imageHeight);
+    const pageHeight =
+      viewElement.parentElement?.getBoundingClientRect().height ||
+      viewElement.getBoundingClientRect().height;
+    const pageFrameHeight = getPageImageFrameHeight(readingMode, isSingleImagePage, pageHeight);
+    const scrollViewHeight = getScrollImagePageViewHeight(readingMode, isSingleImagePage, imageHeight);
 
-    if (!viewHeight) {
+    if (pageFrameHeight) {
+      const height = `${pageFrameHeight}px`;
+      frameElement.style.setProperty("height", height);
+      viewElement.style.setProperty("height", height);
+      return;
+    }
+
+    if (!scrollViewHeight) {
       frameElement.style.removeProperty("height");
       viewElement.style.removeProperty("height");
       return;
     }
 
-    const height = `${viewHeight}px`;
+    const height = `${scrollViewHeight}px`;
     frameElement.style.setProperty("height", height);
     viewElement.style.setProperty("height", height);
   };

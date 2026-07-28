@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getImageScaleStylesheet,
+  getPageImageFrameHeight,
   getPageClickDirection,
   getProgressPercent,
   getScrollImagePageViewHeight,
@@ -91,6 +92,17 @@ describe("getScrollImagePageViewHeight", () => {
   it("does not resize paginated or non-image pages", () => {
     expect(getScrollImagePageViewHeight("page", true, 804.4)).toBeNull();
     expect(getScrollImagePageViewHeight("scroll", false, 804.4)).toBeNull();
+  });
+});
+
+describe("getPageImageFrameHeight", () => {
+  it("uses the visible page height for single-image pages in paginated mode", () => {
+    expect(getPageImageFrameHeight("page", true, 814.2)).toBe(815);
+  });
+
+  it("does not force frame height outside paginated single-image pages", () => {
+    expect(getPageImageFrameHeight("scroll", true, 814.2)).toBeNull();
+    expect(getPageImageFrameHeight("page", false, 814.2)).toBeNull();
   });
 });
 
