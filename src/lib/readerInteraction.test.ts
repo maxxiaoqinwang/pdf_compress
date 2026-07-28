@@ -3,6 +3,7 @@ import {
   getImageScaleStylesheet,
   getPageClickDirection,
   getProgressPercent,
+  getScrollImagePageViewHeight,
   getScaledFixedLayoutWidth,
   isTapGesture
 } from "./readerInteraction";
@@ -79,6 +80,17 @@ describe("getScaledFixedLayoutWidth", () => {
 
   it("falls back to the image natural width when viewport metadata has no width", () => {
     expect(getScaledFixedLayoutWidth("height=2560", 1200, 150)).toBe(1800);
+  });
+});
+
+describe("getScrollImagePageViewHeight", () => {
+  it("uses the enlarged image height for single-image pages in scroll mode", () => {
+    expect(getScrollImagePageViewHeight("scroll", true, 804.4)).toBe(805);
+  });
+
+  it("does not resize paginated or non-image pages", () => {
+    expect(getScrollImagePageViewHeight("page", true, 804.4)).toBeNull();
+    expect(getScrollImagePageViewHeight("scroll", false, 804.4)).toBeNull();
   });
 });
 

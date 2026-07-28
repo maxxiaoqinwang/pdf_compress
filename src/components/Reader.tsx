@@ -12,6 +12,7 @@ import {
   getImageScaleStylesheet,
   getPageClickDirection,
   getProgressPercent,
+  getScrollImagePageViewHeight,
   getScaledFixedLayoutWidth,
   isTapGesture
 } from "../lib/readerInteraction";
@@ -82,7 +83,7 @@ export function Reader({ file, onClose }: ReaderProps) {
           updateReaderProgress(hostElement, rendition, setProgressPercent, getSpineItemCount(book))
         );
         registerThemes(rendition);
-        applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale);
+        applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode);
 
         const [metadata, navigation] = await Promise.all([
           book.loaded.metadata,
@@ -147,7 +148,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       return;
     }
 
-    applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale);
+    applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode);
     saveReaderState({ cfi: currentCfi, fontScale, imageScale, lineHeight, readingMode, theme });
   }, [currentCfi, fontScale, imageScale, lineHeight, readingMode, theme]);
 
@@ -373,7 +374,7 @@ function registerContentEnhancements(
   onPageTurn: () => void
 ) {
   rendition.hooks.content.register((contents: Contents) => {
-    applyImageScaleToContent(contents, settingsRef.current.imageScale);
+    applyImageScaleToContent(contents, settingsRef.current);
     installContentPointerBehavior(contents, rendition, settingsRef, onPageTurn);
   });
 }
@@ -425,8 +426,8 @@ function getSpineItemCount(book: Book | null): number | undefined {
   return Array.isArray(spine?.items) ? spine.items.length : undefined;
 }
 
-function applyImageScaleToRenderedContents(rendition: Rendition, imageScale: number) {
-  getRenderedContents(rendition).forEach((contents) => applyImageScaleToContent(contents, imageScale));
+function applyImageScaleToRenderedContents(rendition: Rendition, settings: ReaderSettings) {
+  getRenderedContents(rendition).forEach((contents) => applyImageScaleToContent(contents, settings));
 }
 
 function getRenderedContents(rendition: Rendition): Contents[] {
@@ -442,16 +443,17 @@ function getRenderedContents(rendition: Rendition): Contents[] {
   }
 }
 
-function applyImageScaleToContent(contents: Contents, imageScale: number) {
-  markSingleImagePage(contents, imageScale);
-  contents.addStylesheetCss(getImageScaleStylesheet(imageScale), "reader-image-scale");
+function applyImageScaleToContent(contents: Contents, settings: ReaderSettings) {
+  const isSingleImagePage = markSingleImagePage(contents, settings.imageScale);
+  contents.addStylesheetCss(getImageScaleStylesheet(settings.imageScale), "reader-image-scale");
+  syncSingleImageViewHeight(contents, settings.readingMode, isSingleImagePage);
 }
 
-function markSingleImagePage(contents: Contents, imageScale: number) {
+function markSingleImagePage(contents: Contents, imageScale: number): boolean {
   const doc = contents.document;
   const body = doc.body;
   if (!body) {
-    return;
+    return false;
   }
 
   const images = body.querySelectorAll("img");
@@ -461,7 +463,7 @@ function markSingleImagePage(contents: Contents, imageScale: number) {
 
   if (!isSingleImagePage) {
     doc.documentElement.style.removeProperty("--reader-fixed-layout-width");
-    return;
+    return false;
   }
 
   const viewportContent = doc.querySelector("meta[name='viewport']")?.getAttribute("content");
@@ -469,6 +471,40 @@ function markSingleImagePage(contents: Contents, imageScale: number) {
   if (scaledWidth) {
     doc.documentElement.style.setProperty("--reader-fixed-layout-width", `${scaledWidth}px`);
   }
+
+  return true;
+}
+
+function syncSingleImageViewHeight(
+  contents: Contents,
+  readingMode: ReadingMode,
+  isSingleImagePage: boolean
+) {
+  const frameElement = contents.window.frameElement as HTMLIFrameElement | null;
+  const viewElement = frameElement?.closest(".epub-view") as HTMLElement | null;
+  if (!frameElement || !viewElement) {
+    return;
+  }
+
+  const applyHeight = () => {
+    const image = contents.document.querySelector("img");
+    const imageHeight = image?.getBoundingClientRect().height ?? 0;
+    const viewHeight = getScrollImagePageViewHeight(readingMode, isSingleImagePage, imageHeight);
+
+    if (!viewHeight) {
+      frameElement.style.removeProperty("height");
+      viewElement.style.removeProperty("height");
+      return;
+    }
+
+    const height = `${viewHeight}px`;
+    frameElement.style.setProperty("height", height);
+    viewElement.style.setProperty("height", height);
+  };
+
+  applyHeight();
+  contents.window.setTimeout(applyHeight, 60);
+  contents.window.setTimeout(applyHeight, 250);
 }
 
 function installContentPointerBehavior(
@@ -691,10 +727,11 @@ function applyReaderStyle(
   theme: ReaderTheme,
   fontScale: number,
   lineHeight: number,
-  imageScale: number
+  imageScale: number,
+  readingMode: ReadingMode
 ) {
   rendition.themes.select(theme);
   rendition.themes.fontSize(`${fontScale}%`);
   rendition.themes.override("line-height", `${lineHeight}%`);
-  applyImageScaleToRenderedContents(rendition, imageScale);
+  applyImageScaleToRenderedContents(rendition, { fontScale, imageScale, lineHeight, readingMode, theme });
 }

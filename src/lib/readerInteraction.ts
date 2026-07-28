@@ -100,6 +100,18 @@ export function getScaledFixedLayoutWidth(
   return baseWidth === null ? null : Math.round((baseWidth * scale) / 100);
 }
 
+export function getScrollImagePageViewHeight(
+  readingMode: ReadingMode,
+  isSingleImagePage: boolean,
+  imageHeight: number
+): number | null {
+  if (readingMode !== "scroll" || !isSingleImagePage || !Number.isFinite(imageHeight) || imageHeight <= 0) {
+    return null;
+  }
+
+  return Math.ceil(imageHeight);
+}
+
 export function getProgressPercent(location: unknown, spineItemCount?: number): number {
   const percentage = readPercentage(location);
   if (percentage !== null) {
