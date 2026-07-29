@@ -1,10 +1,12 @@
-import type { ReadingMode } from "./storage";
+import type { GripMode, ReadingMode } from "./storage";
 
 type PageClickInput = {
   readingMode: ReadingMode;
+  gripMode?: GripMode;
   clientX: number;
   boundsLeft: number;
   boundsWidth: number;
+  edgeRatio?: number;
 };
 
 export type PageClickDirection = "prev" | "next";
@@ -19,15 +21,27 @@ type TapGestureInput = {
 
 export function getPageClickDirection({
   readingMode,
+  gripMode = "right",
   clientX,
   boundsLeft,
-  boundsWidth
+  boundsWidth,
+  edgeRatio = 0.2
 }: PageClickInput): PageClickDirection | null {
   if (readingMode !== "page" || boundsWidth <= 0) {
     return null;
   }
 
-  return clientX - boundsLeft < boundsWidth / 2 ? "prev" : "next";
+  const position = (clientX - boundsLeft) / boundsWidth;
+  const side = position <= edgeRatio ? "left" : position >= 1 - edgeRatio ? "right" : null;
+  if (!side) {
+    return null;
+  }
+
+  if (gripMode === "left") {
+    return side === "left" ? "next" : "prev";
+  }
+
+  return side === "left" ? "prev" : "next";
 }
 
 export function isTapGesture({

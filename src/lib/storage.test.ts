@@ -10,6 +10,7 @@ describe("reader state storage", () => {
     expect(loadReaderState()).toEqual({
       cfi: null,
       fontScale: 100,
+      gripMode: "right",
       imageScale: 100,
       lineHeight: 175,
       readingMode: "scroll",
@@ -21,6 +22,7 @@ describe("reader state storage", () => {
     saveReaderState({
       cfi: "epubcfi(/6/2!/4/2/2)",
       fontScale: 120,
+      gripMode: "left",
       imageScale: 150,
       lineHeight: 190,
       readingMode: "page",
@@ -30,6 +32,7 @@ describe("reader state storage", () => {
     expect(loadReaderState()).toEqual({
       cfi: "epubcfi(/6/2!/4/2/2)",
       fontScale: 120,
+      gripMode: "left",
       imageScale: 150,
       lineHeight: 190,
       readingMode: "page",
@@ -43,6 +46,7 @@ describe("reader state storage", () => {
     expect(loadReaderState()).toEqual({
       cfi: null,
       fontScale: 100,
+      gripMode: "right",
       imageScale: 100,
       lineHeight: 175,
       readingMode: "scroll",
@@ -54,6 +58,7 @@ describe("reader state storage", () => {
     saveReaderState({
       cfi: null,
       fontScale: 400,
+      gripMode: "upside-down" as never,
       imageScale: 999,
       lineHeight: 20,
       readingMode: "sideways" as never,
@@ -63,6 +68,7 @@ describe("reader state storage", () => {
     expect(loadReaderState()).toEqual({
       cfi: null,
       fontScale: 160,
+      gripMode: "right",
       imageScale: 250,
       lineHeight: 140,
       readingMode: "scroll",

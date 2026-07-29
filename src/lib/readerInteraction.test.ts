@@ -10,26 +10,59 @@ import {
 } from "./readerInteraction";
 
 describe("getPageClickDirection", () => {
-  it("turns to the previous page when the left half is clicked in paginated mode", () => {
+  it("turns to the previous page when the left edge is tapped in default mode", () => {
     expect(
       getPageClickDirection({
         readingMode: "page",
-        clientX: 120,
+        clientX: 80,
         boundsLeft: 20,
         boundsWidth: 400
       })
     ).toBe("prev");
   });
 
-  it("turns to the next page when the right half is clicked in paginated mode", () => {
+  it("turns to the next page when the right edge is tapped in default mode", () => {
     expect(
       getPageClickDirection({
         readingMode: "page",
-        clientX: 330,
+        clientX: 380,
         boundsLeft: 20,
         boundsWidth: 400
       })
     ).toBe("next");
+  });
+
+  it("does not turn pages from the middle reading area", () => {
+    expect(
+      getPageClickDirection({
+        readingMode: "page",
+        clientX: 220,
+        boundsLeft: 20,
+        boundsWidth: 400
+      })
+    ).toBeNull();
+  });
+
+  it("puts next page on the left edge in left-hand mode", () => {
+    expect(
+      getPageClickDirection({
+        readingMode: "page",
+        gripMode: "left",
+        clientX: 80,
+        boundsLeft: 20,
+        boundsWidth: 400
+      })
+    ).toBe("next");
+
+    expect(
+      getPageClickDirection({
+        readingMode: "page",
+        gripMode: "left",
+        clientX: 380,
+        boundsLeft: 20,
+        boundsWidth: 400
+      })
+    ).toBe("prev");
   });
 
   it("does not turn pages from clicks in scrolling mode", () => {

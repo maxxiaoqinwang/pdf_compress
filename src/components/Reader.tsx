@@ -4,6 +4,7 @@ import type { Book, Contents, Location, NavItem, Rendition } from "epubjs";
 import {
   loadReaderState,
   saveReaderState,
+  type GripMode,
   type ReaderState,
   type ReaderTheme,
   type ReadingMode
@@ -38,6 +39,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const restoreCfiRef = useRef<string | null>(savedState.cfi);
   const latestSettingsRef = useRef<ReaderSettings>({
     fontScale: savedState.fontScale,
+    gripMode: savedState.gripMode,
     imageScale: savedState.imageScale,
     lineHeight: savedState.lineHeight,
     readingMode: savedState.readingMode,
@@ -49,6 +51,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [toc, setToc] = useState<NavItem[]>([]);
   const [currentCfi, setCurrentCfi] = useState<string | null>(savedState.cfi);
   const [fontScale, setFontScale] = useState(savedState.fontScale);
+  const [gripMode, setGripMode] = useState<GripMode>(savedState.gripMode);
   const [imageScale, setImageScale] = useState(savedState.imageScale);
   const [lineHeight, setLineHeight] = useState(savedState.lineHeight);
   const [readingMode, setReadingMode] = useState<ReadingMode>(savedState.readingMode);
@@ -56,7 +59,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [activeSheet, setActiveSheet] = useState<ReaderSheet>(null);
   const [progressPercent, setProgressPercent] = useState(0);
 
-  latestSettingsRef.current = { fontScale, imageScale, lineHeight, readingMode, theme };
+  latestSettingsRef.current = { fontScale, gripMode, imageScale, lineHeight, readingMode, theme };
 
   useEffect(() => {
     let cancelled = false;
@@ -84,7 +87,7 @@ export function Reader({ file, onClose }: ReaderProps) {
           updateReaderProgress(hostElement, rendition, setProgressPercent, getSpineItemCount(book))
         );
         registerThemes(rendition);
-        applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode);
+        applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode, gripMode);
 
         const [metadata, navigation] = await Promise.all([
           book.loaded.metadata,
@@ -149,9 +152,9 @@ export function Reader({ file, onClose }: ReaderProps) {
       return;
     }
 
-    applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode);
-    saveReaderState({ cfi: currentCfi, fontScale, imageScale, lineHeight, readingMode, theme });
-  }, [currentCfi, fontScale, imageScale, lineHeight, readingMode, theme]);
+    applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode, gripMode);
+    saveReaderState({ cfi: currentCfi, fontScale, gripMode, imageScale, lineHeight, readingMode, theme });
+  }, [currentCfi, fontScale, gripMode, imageScale, lineHeight, readingMode, theme]);
 
   async function goToChapter(href: string) {
     await renditionRef.current?.display(href);
@@ -195,6 +198,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     const bounds = event.currentTarget.getBoundingClientRect();
     const direction = getPageClickDirection({
       readingMode,
+      gripMode,
       clientX: event.clientX,
       boundsLeft: bounds.left,
       boundsWidth: bounds.width
@@ -303,6 +307,29 @@ export function Reader({ file, onClose }: ReaderProps) {
                     onClick={() => setReadingMode("page")}
                   >
                     分页
+                  </button>
+                </div>
+                <div className="segmented-control" aria-label="持握方式">
+                  <button
+                    className={gripMode === "right" ? "selected" : ""}
+                    type="button"
+                    onClick={() => setGripMode("right")}
+                  >
+                    右手
+                  </button>
+                  <button
+                    className={gripMode === "left" ? "selected" : ""}
+                    type="button"
+                    onClick={() => setGripMode("left")}
+                  >
+                    左手
+                  </button>
+                  <button
+                    className={gripMode === "both" ? "selected" : ""}
+                    type="button"
+                    onClick={() => setGripMode("both")}
+                  >
+                    双手
                   </button>
                 </div>
               </div>
@@ -543,6 +570,7 @@ function installContentPointerBehavior(
   const turnFromClientX = (clientX: number) => {
     const direction = getPageClickDirection({
       readingMode: settingsRef.current.readingMode,
+      gripMode: settingsRef.current.gripMode,
       clientX,
       boundsLeft: 0,
       boundsWidth: contents.window.innerWidth || contents.documentElement.clientWidth
@@ -740,10 +768,11 @@ function applyReaderStyle(
   fontScale: number,
   lineHeight: number,
   imageScale: number,
-  readingMode: ReadingMode
+  readingMode: ReadingMode,
+  gripMode: GripMode
 ) {
   rendition.themes.select(theme);
   rendition.themes.fontSize(`${fontScale}%`);
   rendition.themes.override("line-height", `${lineHeight}%`);
-  applyImageScaleToRenderedContents(rendition, { fontScale, imageScale, lineHeight, readingMode, theme });
+  applyImageScaleToRenderedContents(rendition, { fontScale, gripMode, imageScale, lineHeight, readingMode, theme });
 }
