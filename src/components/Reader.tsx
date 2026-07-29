@@ -34,13 +34,15 @@ import {
   isTapGesture,
   type PageClickDirection
 } from "../lib/readerInteraction";
+import { installFileBackedEpubArchive } from "../lib/fileBackedEpubArchive";
+import { readBlobAsArrayBuffer } from "../lib/blobReader";
 import {
   attachLazyResourceCleanup,
   installLazyEpubResourceLoading,
   type LazyEpubResourceController
 } from "../lib/lazyEpubResources";
 import { getRenditionOptions } from "../lib/renditionOptions";
-import { primeContinuousScroll } from "../lib/scrollAdvance";
+import { advanceContinuousScroll, primeContinuousScroll } from "../lib/scrollAdvance";
 
 type ReaderProps = {
   file: File;
@@ -67,11 +69,18 @@ const PROGRESS_SAVE_DELAY = 650;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const bookRef = useRef<Book | null>(null);
   const lazyResourcesRef = useRef<LazyEpubResourceController | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const pageTurnLockedRef = useRef(false);
+  const lastHotzoneTouchRef = useRef(0);
+  const hotzoneTouchStartRef = useRef<{
+    side: "left" | "right";
+    x: number;
+    y: number;
+  } | null>(null);
   const statusRef = useRef<LoadStatus>("loading");
   const progressSaveTimerRef = useRef<number | null>(null);
   const activeSheetRef = useRef<ReaderSheet>(null);
@@ -118,6 +127,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   );
   const [isCompactViewport, setIsCompactViewport] = useState(readCompactViewport);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [imageDocumentActive, setImageDocumentActive] = useState(false);
 
   const pageControls = getToolbarPageControls(gripMode);
 
@@ -254,11 +264,11 @@ export function Reader({ file, onClose }: ReaderProps) {
     async function loadBook() {
       try {
         const useLazyResources = file.size >= LAZY_RESOURCE_THRESHOLD;
-        // JSZip accepts Blob/File input directly in browsers. Keeping the
-        // original File for large books avoids an additional full-size
-        // ArrayBuffer allocation before the archive is opened.
+        // Large books stay backed by the original File. The custom archive
+        // reads only the ZIP index and requested entries through Blob.slice(),
+        // instead of copying the complete EPUB into a JavaScript ArrayBuffer.
         const [bookInput, epubModule] = await Promise.all([
-          useLazyResources ? Promise.resolve(file) : file.arrayBuffer(),
+          useLazyResources ? Promise.resolve(file) : readBlobAsArrayBuffer(file),
           import("epubjs")
         ]);
         if (cancelled) {
@@ -272,6 +282,16 @@ export function Reader({ file, onClose }: ReaderProps) {
         });
         registerEarlyImagePageGuard(loadedBook);
         if (useLazyResources) {
+          installFileBackedEpubArchive(loadedBook, (stage) => {
+            if (cancelled) {
+              return;
+            }
+            if (stage === "reading-index") {
+              setMessage("正在读取 EPUB 文件索引…");
+            } else if (stage === "reading-book-structure") {
+              setMessage("正在读取书籍结构…");
+            }
+          });
           lazyResources = installLazyEpubResourceLoading(loadedBook);
           lazyResourcesRef.current = lazyResources;
         }
@@ -384,6 +404,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
 
     renditionRef.current = rendition;
+    setImageDocumentActive(false);
     setStatus("loading");
     setMessage(
       lowMemoryScroll
@@ -398,7 +419,9 @@ export function Reader({ file, onClose }: ReaderProps) {
       latestSettingsRef,
       (direction) => void turnPage(direction),
       (nextImageScale) => setImageScale(nextImageScale),
-      () => uiActionsRef.current.toggleControls()
+      () => uiActionsRef.current.toggleControls(),
+      (isImageDocument) => setImageDocumentActive(isImageDocument),
+      lazyResources
     );
     registerThemes(rendition);
     applyReaderStyle(
@@ -461,6 +484,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       }
       detachLazyResourceCleanup();
       lazyResources?.resetRenderedSections();
+      setImageDocumentActive(false);
       host.replaceChildren();
     };
   }, [book, file.size, readingMode]);
@@ -525,6 +549,14 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     pageTurnLockedRef.current = true;
     try {
+      if (
+        latestSettingsRef.current.readingMode === "scroll" &&
+        (await advanceContinuousScroll(rendition, direction))
+      ) {
+        window.setTimeout(refreshCurrentProgress, 220);
+        return;
+      }
+
       if (direction === "next") {
         await rendition.next();
       } else {
@@ -650,6 +682,92 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
   }
 
+  function turnFromHotzone(side: "left" | "right") {
+    const stage = stageRef.current;
+    if (!stage || imageScale > 100) {
+      return;
+    }
+
+    const bounds = stage.getBoundingClientRect();
+    const direction = getPageClickDirection({
+      readingMode: "page",
+      gripMode,
+      clientX: side === "left" ? bounds.left + 1 : bounds.right - 1,
+      boundsLeft: bounds.left,
+      boundsWidth: bounds.width
+    });
+    if (direction) {
+      void turnPage(direction);
+    }
+  }
+
+  function handleHotzoneTouchStart(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    if (event.touches.length !== 1) {
+      hotzoneTouchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    hotzoneTouchStartRef.current = {
+      side,
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  }
+
+  function handleHotzoneTouchEnd(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    const start = hotzoneTouchStartRef.current;
+    const touch = event.changedTouches[0];
+    hotzoneTouchStartRef.current = null;
+    if (!start || !touch || start.side !== side) {
+      return;
+    }
+
+    const wasTap = isTapGesture({
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY
+    });
+    const swipeDirection = getSwipeDirection({
+      readingMode: "page",
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY
+    });
+    if (!wasTap && !swipeDirection) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    lastHotzoneTouchRef.current = Date.now();
+    if (swipeDirection) {
+      void turnPage(swipeDirection);
+    } else {
+      turnFromHotzone(side);
+    }
+  }
+
+  function handleHotzoneClick(
+    side: "left" | "right",
+    event: React.MouseEvent<HTMLButtonElement>
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - lastHotzoneTouchRef.current < 500) {
+      return;
+    }
+    turnFromHotzone(side);
+  }
+
   const chromeIsVisible =
     !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
 
@@ -687,13 +805,38 @@ export function Reader({ file, onClose }: ReaderProps) {
       </div>
 
       <div className="reader-layout">
-        <div className="reader-stage" onClick={handleStageClick}>
+        <div ref={stageRef} className="reader-stage" onClick={handleStageClick}>
           {status !== "ready" ? (
             <div className={`reader-message ${status}`} aria-live="polite">
               {message}
             </div>
           ) : null}
           <div ref={mountRef} className="rendition-root" />
+          {status === "ready" &&
+          readingMode === "page" &&
+          imageDocumentActive &&
+          imageScale <= 100 ? (
+            <div className="reader-hotzones" aria-label="分页点击区域">
+              <button
+                className="reader-hotzone left"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "下一页" : "上一页"}
+                onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
+                onClick={(event) => handleHotzoneClick("left", event)}
+              />
+              <button
+                className="reader-hotzone right"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "上一页" : "下一页"}
+                onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
+                onClick={(event) => handleHotzoneClick("right", event)}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -775,9 +918,9 @@ export function Reader({ file, onClose }: ReaderProps) {
                 />
                 <SettingStepper
                   label="图片缩放"
-                  value={readingMode === "page" ? `${imageScale}%` : "分页模式"}
-                  canDecrease={readingMode === "page" && imageScale > 100}
-                  canIncrease={readingMode === "page" && imageScale < 400}
+                  value={`${imageScale}%`}
+                  canDecrease={imageScale > 100}
+                  canIncrease={imageScale < 400}
                   onDecrease={() => setImageScale((value) => Math.max(100, value - 25))}
                   onIncrease={() => setImageScale((value) => Math.min(400, value + 25))}
                 />
@@ -950,10 +1093,16 @@ function registerContentEnhancements(
   settingsRef: { current: ReaderSettings },
   onPageTurn: (direction: PageClickDirection) => void,
   onImageScaleChange: (nextImageScale: number) => void,
-  onToggleControls: () => void
+  onToggleControls: () => void,
+  onImageDocumentChange: (isImageDocument: boolean) => void,
+  lazyResources?: LazyEpubResourceController | null
 ) {
   rendition.hooks.content.register((contents: Contents) => {
+    lazyResources?.activateDocument(contents.document);
     applyImageScaleToContent(contents, settingsRef.current);
+    onImageDocumentChange(
+      contents.document.documentElement.classList.contains("reader-image-document")
+    );
     installContentPointerBehavior(
       contents,
       settingsRef,
@@ -1118,10 +1267,7 @@ function applyImageScaleToContent(
   settings: ReaderSettings,
   syncHeight = true
 ) {
-  // Continuous image pages always fit the reading width. Applying a saved
-  // 200-400% page zoom to several preloaded comic pages can exhaust mobile
-  // memory; zoom remains available in paginated mode.
-  const effectiveImageScale = settings.readingMode === "scroll" ? 100 : settings.imageScale;
+  const effectiveImageScale = settings.imageScale;
   const isSingleImagePage = markSingleImagePage(
     contents,
     effectiveImageScale,
@@ -1157,8 +1303,17 @@ function markSingleImagePage(
   }
 
   const images = body.querySelectorAll("img");
-  const meaningfulText = body.textContent?.replace(/\s+/g, "") ?? "";
-  const isSingleImagePage = images.length === 1 && meaningfulText.length === 0;
+  const svgImages = body.querySelectorAll("svg image");
+  const mediaCount = images.length + svgImages.length;
+  const textProbe = body.cloneNode(true) as Element;
+  textProbe
+    .querySelectorAll("img, picture, source, svg, style, script, noscript")
+    .forEach((element) => element.remove());
+  const meaningfulText = textProbe.textContent?.replace(/\s+/g, "") ?? "";
+  const isImageDocument =
+    mediaCount > 0 && meaningfulText.length <= Math.max(48, mediaCount * 12);
+  const isSingleImagePage = mediaCount === 1 && isImageDocument && images.length === 1;
+  doc.documentElement.classList.toggle("reader-image-document", isImageDocument);
   doc.documentElement.classList.toggle("reader-image-page", isSingleImagePage);
   doc.documentElement.classList.toggle("reader-scroll-mode", readingMode === "scroll");
   doc.documentElement.classList.toggle("reader-page-mode", readingMode === "page");
@@ -1176,7 +1331,11 @@ function updateSingleImagePageWidth(contents: Contents, image: HTMLImageElement,
   const viewportContent = contents.document
     .querySelector("meta[name='viewport']")
     ?.getAttribute("content");
-  const scaledWidth = getScaledFixedLayoutWidth(viewportContent, image.naturalWidth, imageScale);
+  const scaledWidth = getScaledFixedLayoutWidth(
+    viewportContent,
+    image.naturalWidth > 1 ? image.naturalWidth : null,
+    imageScale
+  );
   contents.document.documentElement.style.setProperty(
     "--reader-fixed-layout-width",
     scaledWidth ? `${scaledWidth}px` : `${Math.min(400, Math.max(100, Math.round(imageScale)))}%`
@@ -1217,8 +1376,8 @@ function syncSingleImageViewHeight(
       ?.getAttribute("content");
     const estimatedImageHeight = getEstimatedSingleImageHeight({
       viewportContent,
-      naturalWidth: image.naturalWidth,
-      naturalHeight: image.naturalHeight,
+      naturalWidth: image.naturalWidth > 1 ? image.naturalWidth : null,
+      naturalHeight: image.naturalHeight > 1 ? image.naturalHeight : null,
       attributeWidth: Number(image.getAttribute("width")),
       attributeHeight: Number(image.getAttribute("height")),
       frameWidth,
@@ -1277,6 +1436,20 @@ function syncSingleImageViewHeight(
   };
 }
 
+function previewImageScale(contents: Contents, imageScale: number) {
+  const root = contents.document.documentElement;
+  const image = contents.document.querySelector("img");
+  if (root.classList.contains("reader-image-page") && image) {
+    updateSingleImagePageWidth(contents, image, imageScale);
+    return;
+  }
+
+  root.style.setProperty(
+    "--reader-fixed-layout-width",
+    `${Math.min(400, Math.max(100, Math.round(imageScale)))}%`
+  );
+}
+
 function installContentPointerBehavior(
   contents: Contents,
   settingsRef: { current: ReaderSettings },
@@ -1329,17 +1502,14 @@ function installContentPointerBehavior(
         return;
       }
 
-      const image = doc.querySelector("img");
-      if (image) {
-        updateSingleImagePageWidth(contents, image, pinchPreviewScale);
-      }
+      previewImageScale(contents, pinchPreviewScale);
     });
   };
 
   doc.addEventListener(
     "mousedown",
     (event) => {
-      if (!isZoomedSingleImagePage(doc, settingsRef.current) || !isImageEventTarget(event.target)) {
+      if (!isZoomedImageDocument(doc, settingsRef.current) || !isImageEventTarget(event.target)) {
         return;
       }
 
@@ -1381,12 +1551,10 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchstart",
     (event) => {
-      const isSingleImagePage = doc.documentElement.classList.contains("reader-image-page");
-      if (
-        event.touches.length === 2 &&
-        settingsRef.current.readingMode === "page" &&
-        isSingleImagePage
-      ) {
+      const isImageDocument =
+        doc.documentElement.classList.contains("reader-image-document") ||
+        Boolean(doc.querySelector("img, svg image"));
+      if (event.touches.length === 2 && isImageDocument) {
         pinchStart = {
           distance: getTouchDistance(event.touches[0], event.touches[1]),
           imageScale: settingsRef.current.imageScale
@@ -1417,7 +1585,7 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchmove",
     (event) => {
-      if (pinchStart && event.touches.length === 2 && settingsRef.current.readingMode === "page") {
+      if (pinchStart && event.touches.length === 2) {
         const nextImageScale = getPinchImageScale({
           startScale: pinchStart.imageScale,
           startDistance: pinchStart.distance,
@@ -1438,7 +1606,7 @@ function installContentPointerBehavior(
       const horizontalDistance = Math.abs(touch.clientX - touchStart.x);
       const verticalDistance = Math.abs(touch.clientY - touchStart.y);
       if (
-        !isZoomedSingleImagePage(doc, settingsRef.current) &&
+        !isZoomedImageDocument(doc, settingsRef.current) &&
         horizontalDistance > 12 &&
         horizontalDistance > verticalDistance
       ) {
@@ -1494,7 +1662,10 @@ function installContentPointerBehavior(
           endY: touch.clientY
         });
         if (wasTap) {
-          onToggleControls();
+          const didTurn = turnFromClientX(touch.clientX);
+          if (!didTurn) {
+            onToggleControls();
+          }
           suppressNextClick = true;
           suppressClickTemporarily(contents, () => {
             suppressNextClick = false;
@@ -1505,7 +1676,16 @@ function installContentPointerBehavior(
         return;
       }
 
-      if (gestureStart.startedOnImage && isZoomedSingleImagePage(doc, settingsRef.current)) {
+      if (
+        gestureStart.startedOnImage &&
+        isZoomedImageDocument(doc, settingsRef.current) &&
+        !isTapGesture({
+          startX: gestureStart.x,
+          startY: gestureStart.y,
+          endX: touch.clientX,
+          endY: touch.clientY
+        })
+      ) {
         return;
       }
 
@@ -1570,11 +1750,7 @@ function installContentPointerBehavior(
         return;
       }
 
-      if (
-        settingsRef.current.readingMode === "page" &&
-        !(isZoomedSingleImagePage(doc, settingsRef.current) && isImageEventTarget(event.target)) &&
-        turnFromClientX(event.clientX)
-      ) {
+      if (turnFromClientX(event.clientX)) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -1586,10 +1762,10 @@ function installContentPointerBehavior(
   );
 }
 
-function isZoomedSingleImagePage(doc: Document, settings: ReaderSettings): boolean {
+function isZoomedImageDocument(doc: Document, settings: ReaderSettings): boolean {
   return (
     settings.imageScale > 100 &&
-    doc.documentElement.classList.contains("reader-image-page")
+    doc.documentElement.classList.contains("reader-image-document")
   );
 }
 
@@ -1611,7 +1787,13 @@ function isImageEventTarget(target: EventTarget | null): boolean {
     return false;
   }
 
-  return element.nodeName?.toLowerCase() === "img" || Boolean(element.closest("img"));
+  const nodeName = element.nodeName?.toLowerCase();
+  return (
+    nodeName === "img" ||
+    nodeName === "image" ||
+    nodeName === "svg" ||
+    Boolean(element.closest("img, picture, svg"))
+  );
 }
 
 function isInteractiveTarget(target: EventTarget | null): boolean {

@@ -63,7 +63,7 @@ export function getPageClickDirection({
   boundsWidth,
   edgeRatio = 0.2
 }: PageClickInput): PageClickDirection | null {
-  if (readingMode !== "page" || boundsWidth <= 0) {
+  if ((readingMode !== "page" && readingMode !== "scroll") || boundsWidth <= 0) {
     return null;
   }
 
@@ -117,7 +117,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
   const cursor = scale > 100 ? "grab" : "auto";
 
   return `
-      html.reader-image-page {
+      html.reader-image-document {
         width: var(--reader-fixed-layout-width, ${scale}%) !important;
         min-width: 100% !important;
         max-width: none !important;
@@ -127,7 +127,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
         overscroll-behavior: contain !important;
         touch-action: pan-x pan-y !important;
       }
-      html.reader-image-page body {
+      html.reader-image-document body {
         display: block !important;
         width: 100% !important;
         max-width: none !important;
@@ -138,7 +138,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
         overflow: visible !important;
         touch-action: pan-x pan-y !important;
       }
-      html.reader-image-page img {
+      html.reader-image-document img {
         display: block !important;
         width: 100% !important;
         max-width: none !important;
@@ -146,6 +146,21 @@ export function getImageScaleStylesheet(imageScale: number): string {
         object-fit: contain !important;
         margin: 0 !important;
         cursor: ${cursor} !important;
+        user-select: none !important;
+        -webkit-user-drag: none !important;
+        touch-action: pan-x pan-y !important;
+      }
+      html.reader-image-document svg {
+        display: block !important;
+        width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+        margin: 0 !important;
+        cursor: ${cursor} !important;
+        user-select: none !important;
+        touch-action: pan-x pan-y !important;
+      }
+      html.reader-image-document svg image {
         user-select: none !important;
         -webkit-user-drag: none !important;
         touch-action: pan-x pan-y !important;

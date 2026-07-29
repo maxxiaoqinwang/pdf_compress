@@ -59,6 +59,7 @@ export type ResolvedArchiveResource = {
 };
 
 export type LazyEpubResourceController = {
+  activateDocument: (document: Document) => void;
   releaseSection: (section: unknown) => void;
   resetRenderedSections: () => void;
   destroy: () => void;
@@ -69,6 +70,16 @@ const EXTERNAL_RESOURCE_PATTERN = /^(?:[a-z][a-z\d+.-]*:|#|\/\/)/i;
 const CSS_URL_PATTERN = /url\(\s*(["']?)(.*?)\1\s*\)/gi;
 const CSS_IMPORT_PATTERN = /@import\s+(["'])(.*?)\1/gi;
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+const LAZY_SECTION_ATTRIBUTE = "data-reader-lazy-section";
+const LAZY_PATH_ATTRIBUTE = "data-reader-lazy-path";
+const LAZY_SUFFIX_ATTRIBUTE = "data-reader-lazy-suffix";
+const LAZY_STATE_ATTRIBUTE = "data-reader-lazy-state";
+const LAZY_SRCSET_ATTRIBUTE = "data-reader-lazy-srcset";
+const LAZY_BASE_ATTRIBUTE = "data-reader-lazy-base";
+const LAZY_NEEDS_SIZE_CLASS = "reader-lazy-needs-size";
+const MAX_CONCURRENT_IMAGE_LOADS = 2;
+const TRANSPARENT_IMAGE =
+  "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
 
 /**
  * epub.js normally creates Blob URLs for every manifest asset before the first
@@ -91,6 +102,9 @@ export function installLazyEpubResourceLoading(book: Book): LazyEpubResourceCont
   contentHooks.register(contentHook);
 
   return {
+    activateDocument(document) {
+      loader.activateDocument(document);
+    },
     releaseSection(section) {
       loader.releaseSection(section as LazySection);
     },
@@ -226,6 +240,8 @@ class LazyResourceLoader {
   private readonly sectionResources = new Map<string, Set<string>>();
   private readonly sections = new Map<string, LazySection>();
   private readonly activeSections = new Set<string>();
+  private readonly sectionCleanups = new Map<string, Set<() => void>>();
+  private readonly activatedDocuments = new WeakSet<Document>();
   private readonly sectionKeys = new WeakMap<object, string>();
   private nextSectionKey = 0;
   private destroyed = false;
@@ -244,12 +260,28 @@ class LazyResourceLoader {
     this.sections.set(sectionKey, section);
 
     const basePath = normalizeArchiveBasePath(section.url ?? section.href);
+    document.documentElement.setAttribute(LAZY_SECTION_ATTRIBUTE, sectionKey);
+    this.prepareLazyImages(document, basePath);
+
     const tasks: Promise<void>[] = [];
     this.queueAttributeRewrites(document, sectionKey, basePath, tasks);
-    this.queueSrcsetRewrites(document, sectionKey, basePath, tasks);
     this.queueInlineStyleRewrites(document, sectionKey, basePath, tasks);
     this.queueStylesheetRewrites(document, sectionKey, basePath, tasks);
     await Promise.all(tasks);
+  }
+
+  activateDocument(document: Document): void {
+    if (this.destroyed || this.activatedDocuments.has(document)) {
+      return;
+    }
+
+    const sectionKey = document.documentElement?.getAttribute(LAZY_SECTION_ATTRIBUTE);
+    if (!sectionKey || !this.activeSections.has(sectionKey)) {
+      return;
+    }
+
+    this.activatedDocuments.add(document);
+    this.installImageProximityLoader(document, sectionKey);
   }
 
   releaseSection(section: LazySection): void {
@@ -263,7 +295,8 @@ class LazyResourceLoader {
     const keys = new Set([
       ...this.activeSections,
       ...this.sections.keys(),
-      ...this.sectionResources.keys()
+      ...this.sectionResources.keys(),
+      ...this.sectionCleanups.keys()
     ]);
     for (const sectionKey of keys) {
       this.releaseSectionByKey(sectionKey);
@@ -284,6 +317,349 @@ class LazyResourceLoader {
     this.pending.clear();
     this.activeSections.clear();
     this.sections.clear();
+    this.sectionCleanups.clear();
+  }
+
+  private prepareLazyImages(document: Document, basePath: string) {
+    const mediaElements = Array.from(
+      document.querySelectorAll<Element>(
+        "img[src], img[srcset], image[href], image[xlink\\:href]"
+      )
+    );
+    if (mediaElements.length === 0) {
+      return;
+    }
+
+    const imageDominantDocument = isImageDominantDocument(document);
+    if (imageDominantDocument) {
+      document.documentElement.classList.add("reader-lazy-image-document");
+    }
+    installLazyImagePlaceholderStyle(document);
+
+    for (const media of mediaElements) {
+      const originalSource = getLazyMediaSource(media);
+      const fallbackFromSrcset =
+        media.localName.toLowerCase() === "img"
+          ? getBestSrcsetCandidate(media.getAttribute("srcset"))
+          : null;
+      const resolved =
+        resolveArchiveResource(originalSource, basePath) ??
+        resolveArchiveResource(fallbackFromSrcset, basePath);
+      if (!resolved) {
+        continue;
+      }
+
+      media.setAttribute(LAZY_PATH_ATTRIBUTE, resolved.path);
+      media.setAttribute(LAZY_SUFFIX_ATTRIBUTE, resolved.suffix);
+      media.setAttribute(LAZY_BASE_ATTRIBUTE, basePath);
+      media.setAttribute(LAZY_STATE_ATTRIBUTE, "pending");
+      media.classList.add("reader-lazy-image");
+
+      const sizingElement = getLazyMediaSizingElement(media);
+      if (imageDominantDocument) {
+        sizingElement.classList.add("reader-lazy-page-image");
+      }
+
+      if (media.localName.toLowerCase() === "img") {
+        const image = media as HTMLImageElement;
+        image.setAttribute("loading", "lazy");
+        image.setAttribute("decoding", "async");
+        preserveImageAspectRatio(image);
+        if (!hasImageSizeHint(image)) {
+          sizingElement.classList.add(LAZY_NEEDS_SIZE_CLASS);
+        }
+
+        const srcset = image.getAttribute("srcset");
+        if (srcset) {
+          image.setAttribute(LAZY_SRCSET_ATTRIBUTE, srcset);
+          image.removeAttribute("srcset");
+        }
+      }
+
+      setLazyMediaSource(media, TRANSPARENT_IMAGE);
+    }
+
+    // A <picture> source can request an image before its fallback <img> enters
+    // the viewport. Keep sources inert; the fallback image remains the single
+    // controlled source and prevents a browser from decoding multiple variants.
+    document
+      .querySelectorAll<HTMLSourceElement>("picture source[src], picture source[srcset]")
+      .forEach((source) => {
+        source.removeAttribute("src");
+        source.removeAttribute("srcset");
+      });
+  }
+
+  private installImageProximityLoader(document: Document, sectionKey: string) {
+    const elements = Array.from(
+      document.querySelectorAll<Element>(
+        `[${LAZY_PATH_ATTRIBUTE}][${LAZY_STATE_ATTRIBUTE}='pending']`
+      )
+    );
+    const archive = this.getArchive();
+    if (elements.length === 0 || !archive) {
+      return;
+    }
+
+    type ImageRecord = {
+      element: Element;
+      sizingElement: Element;
+      path: string;
+      suffix: string;
+      state: "pending" | "queued" | "loading" | "loaded";
+      objectUrl: string | null;
+      forceLoad: boolean;
+    };
+
+    const records: ImageRecord[] = elements.flatMap((element) => {
+      const path = element.getAttribute(LAZY_PATH_ATTRIBUTE);
+      return path
+        ? [
+            {
+              element,
+              sizingElement: getLazyMediaSizingElement(element),
+              path,
+              suffix: element.getAttribute(LAZY_SUFFIX_ATTRIBUTE) ?? "",
+              state: "pending" as const,
+              objectUrl: null,
+              forceLoad: false
+            }
+          ]
+        : [];
+    });
+    if (records.length === 0) {
+      return;
+    }
+
+    const contentWindow = document.defaultView;
+    const schedulerWindow = contentWindow ?? window;
+    const frameElement = contentWindow?.frameElement as HTMLElement | null;
+    const scrollContainer = findReaderScrollContainer(frameElement);
+    const loadQueue: ImageRecord[] = [];
+    let disposed = false;
+    let animationFrame: number | null = null;
+    let activeLoads = 0;
+
+    const scheduleScan = () => {
+      if (disposed || animationFrame !== null) {
+        return;
+      }
+      animationFrame = schedulerWindow.requestAnimationFrame(scan);
+    };
+
+    const unloadRecord = (record: ImageRecord) => {
+      if (record.state !== "loaded" || !record.objectUrl) {
+        return;
+      }
+
+      setLazyMediaSource(record.element, TRANSPARENT_IMAGE);
+      record.element.setAttribute(LAZY_STATE_ATTRIBUTE, "pending");
+      URL.revokeObjectURL(record.objectUrl);
+      record.objectUrl = null;
+      record.state = "pending";
+    };
+
+    const finishLoad = (record: ImageRecord) => {
+      activeLoads = Math.max(0, activeLoads - 1);
+      if (!disposed) {
+        pumpQueue();
+      }
+    };
+
+    const loadRecord = async (record: ImageRecord) => {
+      if (disposed || !this.activeSections.has(sectionKey)) {
+        finishLoad(record);
+        return;
+      }
+
+      record.state = "loading";
+      record.element.setAttribute(LAZY_STATE_ATTRIBUTE, "loading");
+      try {
+        const blob = await archive.getBlob(record.path);
+        if (!blob) {
+          throw new Error(`Missing EPUB image: ${record.path}`);
+        }
+        if (disposed || !this.activeSections.has(sectionKey)) {
+          return;
+        }
+
+        const objectUrl = URL.createObjectURL(blob);
+        if (disposed || !this.activeSections.has(sectionKey)) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+
+        record.objectUrl = objectUrl;
+        record.state = "loaded";
+        setLazyMediaSource(record.element, `${objectUrl}${record.suffix}`);
+        record.element.setAttribute(LAZY_STATE_ATTRIBUTE, "loaded");
+
+        if (record.element.localName.toLowerCase() === "img") {
+          const image = record.element as HTMLImageElement;
+          const handleDecoded = () => {
+            if (image.naturalWidth > 1 && image.naturalHeight > 1) {
+              image.style.setProperty(
+                "aspect-ratio",
+                `${image.naturalWidth} / ${image.naturalHeight}`
+              );
+              record.sizingElement.classList.remove(LAZY_NEEDS_SIZE_CLASS);
+            }
+            scheduleScan();
+          };
+          if (image.complete) {
+            handleDecoded();
+          } else {
+            image.addEventListener("load", handleDecoded, { once: true });
+          }
+        }
+      } catch {
+        if (!disposed) {
+          record.state = "pending";
+          record.element.setAttribute(LAZY_STATE_ATTRIBUTE, "pending");
+        }
+      } finally {
+        finishLoad(record);
+      }
+    };
+
+    const pumpQueue = () => {
+      while (!disposed && activeLoads < MAX_CONCURRENT_IMAGE_LOADS && loadQueue.length > 0) {
+        const record = loadQueue.shift();
+        if (!record || record.state !== "queued") {
+          continue;
+        }
+        activeLoads += 1;
+        void loadRecord(record);
+      }
+    };
+
+    const enqueueRecord = (record: ImageRecord, forceLoad = false) => {
+      if (disposed || record.state !== "pending") {
+        return;
+      }
+
+      record.forceLoad ||= forceLoad;
+      record.state = "queued";
+      record.element.setAttribute(LAZY_STATE_ATTRIBUTE, "queued");
+      loadQueue.push(record);
+      pumpQueue();
+    };
+
+    function getRootRect() {
+      const fallbackHeight = Math.max(1, contentWindow?.innerHeight ?? window.innerHeight ?? 1);
+      const fallbackWidth = Math.max(1, contentWindow?.innerWidth ?? window.innerWidth ?? 1);
+      const rect = scrollContainer?.getBoundingClientRect();
+      if (rect && rect.height > 0 && rect.width > 0) {
+        return rect;
+      }
+
+      return {
+        top: 0,
+        right: fallbackWidth,
+        bottom: fallbackHeight,
+        left: 0,
+        width: fallbackWidth,
+        height: fallbackHeight
+      };
+    }
+
+    function getAbsoluteBounds(record: ImageRecord) {
+      const bounds = record.sizingElement.getBoundingClientRect();
+      const frameBounds = frameElement?.getBoundingClientRect();
+      const estimatedHeight =
+        bounds.height > 1
+          ? bounds.height
+          : Math.max(420, (contentWindow?.innerWidth ?? 390) * 1.35);
+      const estimatedWidth =
+        bounds.width > 1
+          ? bounds.width
+          : Math.max(1, contentWindow?.innerWidth ?? 390);
+      const top = (frameBounds?.top ?? 0) + bounds.top;
+      const left = (frameBounds?.left ?? 0) + bounds.left;
+      return {
+        top,
+        right: left + estimatedWidth,
+        bottom: top + estimatedHeight,
+        left
+      };
+    }
+
+    function scan() {
+      animationFrame = null;
+      if (disposed) {
+        return;
+      }
+
+      const rootRect = getRootRect();
+      const verticalPreload = Math.max(520, rootRect.height * 1.35);
+      const horizontalPreload = Math.max(390, rootRect.width * 1.5);
+      const verticalRetain = Math.max(1600, rootRect.height * 4);
+      const horizontalRetain = Math.max(1200, rootRect.width * 4);
+      const loadMinY = rootRect.top - verticalPreload;
+      const loadMaxY = rootRect.bottom + verticalPreload;
+      const loadMinX = rootRect.left - horizontalPreload;
+      const loadMaxX = rootRect.right + horizontalPreload;
+      const retainMinY = rootRect.top - verticalRetain;
+      const retainMaxY = rootRect.bottom + verticalRetain;
+      const retainMinX = rootRect.left - horizontalRetain;
+      const retainMaxX = rootRect.right + horizontalRetain;
+
+      for (const record of records) {
+        const bounds = getAbsoluteBounds(record);
+        const isNear =
+          bounds.bottom >= loadMinY &&
+          bounds.top <= loadMaxY &&
+          bounds.right >= loadMinX &&
+          bounds.left <= loadMaxX;
+        const isRetained =
+          bounds.bottom >= retainMinY &&
+          bounds.top <= retainMaxY &&
+          bounds.right >= retainMinX &&
+          bounds.left <= retainMaxX;
+
+        if (isNear || record.forceLoad) {
+          record.forceLoad = false;
+          enqueueRecord(record);
+        } else if (!isRetained) {
+          unloadRecord(record);
+        }
+      }
+    }
+
+    // One immediate image is enough to make the first page visible. Remaining
+    // images are queued by geometry, two at a time, independent of spine size.
+    enqueueRecord(records[0], true);
+    scheduleScan();
+    scrollContainer?.addEventListener("scroll", scheduleScan, { passive: true });
+    contentWindow?.addEventListener("scroll", scheduleScan, { passive: true });
+    contentWindow?.addEventListener("resize", scheduleScan, { passive: true });
+    document.addEventListener("load", scheduleScan, true);
+
+    const cleanup = () => {
+      disposed = true;
+      if (animationFrame !== null) {
+        schedulerWindow.cancelAnimationFrame(animationFrame);
+      }
+      scrollContainer?.removeEventListener("scroll", scheduleScan);
+      contentWindow?.removeEventListener("scroll", scheduleScan);
+      contentWindow?.removeEventListener("resize", scheduleScan);
+      document.removeEventListener("load", scheduleScan, true);
+      loadQueue.splice(0);
+      for (const record of records) {
+        if (record.objectUrl) {
+          setLazyMediaSource(record.element, TRANSPARENT_IMAGE);
+          URL.revokeObjectURL(record.objectUrl);
+          record.objectUrl = null;
+        }
+      }
+    };
+    this.addSectionCleanup(sectionKey, cleanup);
+  }
+
+  private addSectionCleanup(sectionKey: string, cleanup: () => void) {
+    const cleanups = this.sectionCleanups.get(sectionKey) ?? new Set<() => void>();
+    cleanups.add(cleanup);
+    this.sectionCleanups.set(sectionKey, cleanups);
   }
 
   private queueAttributeRewrites(
@@ -293,9 +669,6 @@ class LazyResourceLoader {
     tasks: Promise<void>[]
   ) {
     const attributes: Array<[string, string]> = [
-      ["img[src]", "src"],
-      ["image[href]", "href"],
-      ["image[xlink\\:href]", "xlink:href"],
       ["use[href]", "href"],
       ["use[xlink\\:href]", "xlink:href"],
       ["source[src]", "src"],
@@ -642,12 +1015,21 @@ class LazyResourceLoader {
     if (
       !this.activeSections.has(sectionKey) &&
       !this.sections.has(sectionKey) &&
-      !this.sectionResources.has(sectionKey)
+      !this.sectionResources.has(sectionKey) &&
+      !this.sectionCleanups.has(sectionKey)
     ) {
       return;
     }
 
     this.activeSections.delete(sectionKey);
+    const cleanups = this.sectionCleanups.get(sectionKey);
+    if (cleanups) {
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+    }
+    this.sectionCleanups.delete(sectionKey);
+
     const resources = this.sectionResources.get(sectionKey);
     if (resources) {
       for (const cacheKey of resources) {
@@ -706,6 +1088,133 @@ function setResourceAttribute(element: Element, attribute: string, value: string
   }
 
   element.setAttribute(attribute, value);
+}
+
+function isImageDominantDocument(document: Document): boolean {
+  const body = document.body;
+  const mediaCount = body?.querySelectorAll("img, svg image").length ?? 0;
+  if (!body || mediaCount === 0) {
+    return false;
+  }
+
+  const probe = body.cloneNode(true) as Element;
+  probe
+    .querySelectorAll("img, picture, source, svg, style, script, noscript")
+    .forEach((element) => element.remove());
+  const textLength = (probe.textContent?.replace(/\s+/g, "") ?? "").length;
+  return textLength <= Math.max(48, mediaCount * 12);
+}
+
+function installLazyImagePlaceholderStyle(document: Document) {
+  if (document.getElementById("reader-lazy-image-placeholders")) {
+    return;
+  }
+
+  const head = document.head ?? document.querySelector("head");
+  if (!head) {
+    return;
+  }
+
+  const style = document.createElementNS("http://www.w3.org/1999/xhtml", "style");
+  style.id = "reader-lazy-image-placeholders";
+  style.textContent = `
+    .reader-lazy-image[${LAZY_STATE_ATTRIBUTE}='pending'],
+    .reader-lazy-image[${LAZY_STATE_ATTRIBUTE}='queued'],
+    .reader-lazy-image[${LAZY_STATE_ATTRIBUTE}='loading'] {
+      background: rgba(127, 127, 127, 0.06) !important;
+    }
+    img.reader-lazy-image.${LAZY_NEEDS_SIZE_CLASS}[${LAZY_STATE_ATTRIBUTE}='pending'],
+    img.reader-lazy-image.${LAZY_NEEDS_SIZE_CLASS}[${LAZY_STATE_ATTRIBUTE}='queued'],
+    img.reader-lazy-image.${LAZY_NEEDS_SIZE_CLASS}[${LAZY_STATE_ATTRIBUTE}='loading'] {
+      display: block !important;
+      min-height: clamp(180px, 72vw, 720px) !important;
+    }
+    html.reader-lazy-image-document .reader-lazy-page-image {
+      display: block !important;
+      width: 100% !important;
+      max-width: none !important;
+      height: auto !important;
+      object-fit: contain !important;
+      margin: 0 !important;
+    }
+    html.reader-lazy-image-document .reader-lazy-page-image.${LAZY_NEEDS_SIZE_CLASS}[${LAZY_STATE_ATTRIBUTE}='pending'],
+    html.reader-lazy-image-document .reader-lazy-page-image.${LAZY_NEEDS_SIZE_CLASS}[${LAZY_STATE_ATTRIBUTE}='queued'],
+    html.reader-lazy-image-document .reader-lazy-page-image.${LAZY_NEEDS_SIZE_CLASS}[${LAZY_STATE_ATTRIBUTE}='loading'] {
+      min-height: clamp(420px, 135vw, 1200px) !important;
+    }
+  `;
+  head.appendChild(style);
+}
+
+function getLazyMediaSource(element: Element): string | null {
+  if (element.localName.toLowerCase() === "image") {
+    return (
+      element.getAttribute("href") ??
+      element.getAttributeNS(XLINK_NAMESPACE, "href") ??
+      element.getAttribute("xlink:href")
+    );
+  }
+
+  return element.getAttribute("src");
+}
+
+function setLazyMediaSource(element: Element, value: string) {
+  if (element.localName.toLowerCase() === "image") {
+    element.setAttribute("href", value);
+    element.setAttributeNS(XLINK_NAMESPACE, "xlink:href", value);
+    return;
+  }
+
+  element.setAttribute("src", value);
+}
+
+function getBestSrcsetCandidate(srcset: string | null): string | null {
+  if (!srcset) {
+    return null;
+  }
+
+  const candidates = srcset
+    .split(",")
+    .map((candidate) => candidate.trim().split(/\s+/, 1)[0])
+    .filter(Boolean);
+  return candidates.at(-1) ?? null;
+}
+
+function getLazyMediaSizingElement(element: Element): Element {
+  if (element.localName.toLowerCase() === "image") {
+    return element.closest("svg") ?? element;
+  }
+  return element;
+}
+
+function hasImageSizeHint(image: HTMLImageElement): boolean {
+  const width = Number(image.getAttribute("width"));
+  const height = Number(image.getAttribute("height"));
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return true;
+  }
+
+  const style = image.getAttribute("style") ?? "";
+  return /aspect-ratio\s*:|(?:^|;)\s*height\s*:/i.test(style);
+}
+
+function preserveImageAspectRatio(image: HTMLImageElement) {
+  const width = Number(image.getAttribute("width"));
+  const height = Number(image.getAttribute("height"));
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    image.style.setProperty("aspect-ratio", `${width} / ${height}`);
+  }
+}
+
+function findReaderScrollContainer(frameElement: HTMLElement | null): HTMLElement | null {
+  if (!frameElement) {
+    return null;
+  }
+
+  return (
+    (frameElement.closest(".epub-container") as HTMLElement | null) ??
+    (frameElement.closest(".epub-view")?.parentElement as HTMLElement | null)
+  );
 }
 
 function normalizeArchiveBasePath(basePath: string | null | undefined): string {

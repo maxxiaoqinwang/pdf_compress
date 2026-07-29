@@ -61,15 +61,15 @@ describe("getPageClickDirection", () => {
     ).toBe("next");
   });
 
-  it("does not turn pages from clicks in scrolling mode", () => {
+  it("uses edge taps as viewport navigation in scrolling mode", () => {
     expect(
       getPageClickDirection({
         readingMode: "scroll",
-        clientX: 330,
+        clientX: 380,
         boundsLeft: 20,
         boundsWidth: 400
       })
-    ).toBeNull();
+    ).toBe("next");
   });
 });
 
@@ -111,12 +111,12 @@ describe("getProgressPercent", () => {
 });
 
 describe("getImageScaleStylesheet", () => {
-  it("scales only fixed-layout single-image pages", () => {
+  it("scales image-only documents without affecting text chapters", () => {
     const stylesheet = getImageScaleStylesheet(175);
 
-    expect(stylesheet).toContain("html.reader-image-page");
+    expect(stylesheet).toContain("html.reader-image-document");
     expect(stylesheet).toContain("width: var(--reader-fixed-layout-width, 175%)");
-    expect(stylesheet).toContain("html.reader-image-page img");
+    expect(stylesheet).toContain("html.reader-image-document img");
     expect(stylesheet).toContain("width: 100% !important");
     expect(stylesheet).not.toMatch(/(^|\n)\s*html, body/);
     expect(stylesheet).not.toMatch(/(^|\n)\s*img\s*\{/);

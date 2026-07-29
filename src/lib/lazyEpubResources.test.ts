@@ -101,14 +101,148 @@ describe("installLazyEpubResourceLoading", () => {
     expect(contentHook).toBeTypeOf("function");
     await contentHook?.(document, section);
 
-    expect(getBlob).toHaveBeenCalledWith("/OPS/Images/page.jpg");
-    expect(document.querySelector("img")?.getAttribute("src")).toBe(
-      "blob:https://reader.test/page-1"
-    );
+    // Merely parsing a chapter must not inflate its image. The first nearby
+    // image is requested only after epub.js has attached the document.
+    expect(getBlob).not.toHaveBeenCalled();
+    controller.activateDocument(document);
+    await vi.waitFor(() => {
+      expect(getBlob).toHaveBeenCalledWith("/OPS/Images/page.jpg");
+      expect(document.querySelector("img")?.getAttribute("src")).toBe(
+        "blob:https://reader.test/page-1"
+      );
+    });
 
     controller.releaseSection(section);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:https://reader.test/page-1");
     expect(unload).toHaveBeenCalledOnce();
+  });
+
+  it("defers the remaining images when one chapter contains the entire comic", async () => {
+    let contentHook:
+      | ((document: Document, section: { url: string; unload: () => void }) => Promise<void>)
+      | undefined;
+    const getBlob = vi.fn(async (path: string) => new Blob([path], { type: "image/jpeg" }));
+    URL.createObjectURL = vi.fn((blob: Blob) => `blob:https://reader.test/${blob.size}`);
+    URL.revokeObjectURL = vi.fn();
+
+    const book = {
+      archive: { getBlob, getText: vi.fn() },
+      spine: {
+        hooks: {
+          content: {
+            register(hook: typeof contentHook) {
+              contentHook = hook;
+            },
+            deregister: vi.fn()
+          }
+        }
+      }
+    } as unknown as Book;
+
+    const controller = installLazyEpubResourceLoading(book);
+    const document = new DOMParser().parseFromString(
+      `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <img src="../Images/page-1.jpg" width="1200" height="1800" />
+        <img src="../Images/page-2.jpg" width="1200" height="1800" />
+        <img src="../Images/page-3.jpg" width="1200" height="1800" />
+      </body></html>`,
+      "application/xhtml+xml"
+    );
+    const section = { url: "/OPS/Text/all-pages.xhtml", unload: vi.fn() };
+    Array.from(document.querySelectorAll("img")).forEach((image, index) => {
+      Object.defineProperty(image, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({
+          x: 0,
+          y: index * 5000,
+          left: 0,
+          right: 390,
+          top: index * 5000,
+          bottom: index * 5000 + 1000,
+          width: 390,
+          height: 1000,
+          toJSON: () => ({})
+        })
+      });
+    });
+
+    await contentHook?.(document, section);
+    expect(getBlob).not.toHaveBeenCalled();
+
+    controller.activateDocument(document);
+    await vi.waitFor(() => expect(getBlob).toHaveBeenCalledTimes(1));
+
+    expect(getBlob).toHaveBeenCalledWith("/OPS/Images/page-1.jpg");
+    expect(
+      Array.from(document.querySelectorAll("img")).map((image) =>
+        image.getAttribute("data-reader-lazy-state")
+      )
+    ).toEqual(["loaded", "pending", "pending"]);
+
+    controller.destroy();
+  });
+
+  it("loads only nearby horizontal columns in a single-chapter paginated comic", async () => {
+    let contentHook:
+      | ((document: Document, section: { url: string; unload: () => void }) => Promise<void>)
+      | undefined;
+    const getBlob = vi.fn(async (path: string) => new Blob([path], { type: "image/jpeg" }));
+    URL.createObjectURL = vi.fn((blob: Blob) => `blob:https://reader.test/${blob.size}`);
+    URL.revokeObjectURL = vi.fn();
+
+    const book = {
+      archive: { getBlob, getText: vi.fn() },
+      spine: {
+        hooks: {
+          content: {
+            register(hook: typeof contentHook) {
+              contentHook = hook;
+            },
+            deregister: vi.fn()
+          }
+        }
+      }
+    } as unknown as Book;
+
+    const controller = installLazyEpubResourceLoading(book);
+    const document = new DOMParser().parseFromString(
+      `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <img src="../Images/page-1.jpg" width="1200" height="1800" />
+        <img src="../Images/page-2.jpg" width="1200" height="1800" />
+        <img src="../Images/page-3.jpg" width="1200" height="1800" />
+      </body></html>`,
+      "application/xhtml+xml"
+    );
+    const section = { url: "/OPS/Text/all-pages.xhtml", unload: vi.fn() };
+    Array.from(document.querySelectorAll("img")).forEach((image, index) => {
+      Object.defineProperty(image, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({
+          x: index * 5000,
+          y: 0,
+          left: index * 5000,
+          right: index * 5000 + 390,
+          top: 0,
+          bottom: 800,
+          width: 390,
+          height: 800,
+          toJSON: () => ({})
+        })
+      });
+    });
+
+    await contentHook?.(document, section);
+    controller.activateDocument(document);
+    await vi.waitFor(() => expect(getBlob).toHaveBeenCalledTimes(1));
+
+    expect(getBlob).toHaveBeenCalledWith("/OPS/Images/page-1.jpg");
+    expect(
+      Array.from(document.querySelectorAll("img")).map((image) =>
+        image.getAttribute("data-reader-lazy-state")
+      )
+    ).toEqual(["loaded", "pending", "pending"]);
+
+    controller.destroy();
   });
 
   it("rewrites only the rendered chapter stylesheet and its referenced assets", async () => {
@@ -183,6 +317,7 @@ describe("attachLazyResourceCleanup", () => {
     };
     const releaseSection = vi.fn();
     const controller = {
+      activateDocument: vi.fn(),
       releaseSection,
       resetRenderedSections: vi.fn(),
       destroy: vi.fn()
@@ -216,6 +351,7 @@ describe("attachLazyResourceCleanup", () => {
     const listeners = new Map<string, () => void>();
     const releaseSection = vi.fn();
     const controller = {
+      activateDocument: vi.fn(),
       releaseSection,
       resetRenderedSections: vi.fn(),
       destroy: vi.fn()

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -67,8 +67,24 @@ vi.mock("epubjs", () => ({
 }));
 
 import { Reader } from "./Reader";
+import { createBookKey } from "../lib/storage";
 
 const LARGE_FILE_SIZE = 33 * 1024 * 1024;
+
+function createImageContents() {
+  const imageDocument = document.implementation.createHTMLDocument("comic-page");
+  imageDocument.body.innerHTML = `
+    <img src="page-1.jpg" width="1200" height="1800" />
+    <img src="page-2.jpg" width="1200" height="1800" />
+  `;
+
+  return {
+    document: imageDocument,
+    window,
+    documentElement: imageDocument.documentElement,
+    addStylesheetCss: vi.fn(async () => undefined)
+  };
+}
 
 function createTestFile(name: string, lastModified: number) {
   const file = new File([new Uint8Array(1024)], name, {
@@ -155,5 +171,83 @@ describe("Reader mobile scroll controls", () => {
         offsetDelta: 0
       })
     );
+  });
+
+  it("keeps image zoom available in scroll mode", async () => {
+    const { file } = createTestFile("comic-scroll.epub", 4);
+    render(<Reader file={file} onClose={() => {}} />);
+
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+
+    const increaseImageScale = await screen.findByRole("button", {
+      name: "增大图片缩放"
+    });
+    expect(increaseImageScale).toBeEnabled();
+    fireEvent.click(increaseImageScale);
+    expect(screen.getByText("125%")).toBeInTheDocument();
+  });
+
+  it("restores reliable left and right page tap zones in paginated mode", async () => {
+    const { file } = createTestFile("comic.epub", 3);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 390,
+        bottom: 844,
+        left: 0,
+        width: 390,
+        height: 844,
+        toJSON: () => ({})
+      })
+    });
+
+    const leftZone = container.querySelector(".reader-hotzone.left") as HTMLButtonElement;
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    expect(leftZone).toBeInTheDocument();
+    expect(rightZone).toBeInTheDocument();
+
+    fireEvent.touchStart(rightZone, {
+      touches: [{ clientX: 389, clientY: 400 }]
+    });
+    fireEvent.touchEnd(rightZone, {
+      changedTouches: [{ clientX: 389, clientY: 400 }]
+    });
+    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
+
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    fireEvent.touchStart(leftZone, {
+      touches: [{ clientX: 1, clientY: 400 }]
+    });
+    fireEvent.touchEnd(leftZone, {
+      changedTouches: [{ clientX: 1, clientY: 400 }]
+    });
+    await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
 });
