@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getEstimatedSingleImageHeight,
   getImageScaleStylesheet,
   getLocationSpineIndex,
   getPageImageFrameHeight,
@@ -119,6 +120,37 @@ describe("getImageScaleStylesheet", () => {
     expect(stylesheet).toContain("width: 100% !important");
     expect(stylesheet).not.toMatch(/(^|\n)\s*html, body/);
     expect(stylesheet).not.toMatch(/(^|\n)\s*img\s*\{/);
+  });
+});
+
+describe("getEstimatedSingleImageHeight", () => {
+  it("uses fixed-layout viewport ratio before the image has decoded", () => {
+    expect(
+      getEstimatedSingleImageHeight({
+        viewportContent: "width=1200,height=1800",
+        frameWidth: 400
+      })
+    ).toBe(600);
+  });
+
+  it("uses image dimensions and zoom when viewport metadata is absent", () => {
+    expect(
+      getEstimatedSingleImageHeight({
+        naturalWidth: 1000,
+        naturalHeight: 1500,
+        frameWidth: 400,
+        imageScale: 150
+      })
+    ).toBe(900);
+  });
+
+  it("keeps a non-zero fallback for undecoded image pages", () => {
+    expect(
+      getEstimatedSingleImageHeight({
+        frameWidth: 0,
+        fallbackHeight: 812.2
+      })
+    ).toBe(813);
   });
 });
 

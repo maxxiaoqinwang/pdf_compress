@@ -411,6 +411,44 @@ h1 {
   transition-delay: 0s, 0s, 220ms;
 }
 
+.reader-controls-reveal {
+  position: absolute;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 24;
+  display: inline-flex;
+  min-width: 72px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid rgba(72, 60, 44, 0.2);
+  border-radius: 999px;
+  color: #302a22;
+  background: rgba(251, 247, 239, 0.88);
+  box-shadow: 0 5px 18px rgba(58, 47, 34, 0.16);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  touch-action: manipulation;
+}
+
+.reader-controls-reveal span {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.night .reader-controls-reveal {
+  border-color: rgba(231, 224, 213, 0.18);
+  color: #eee7db;
+  background: rgba(23, 22, 19, 0.86);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.28);
+}
+
 .reader-message {
   position: absolute;
   inset: 72px 16px 82px;

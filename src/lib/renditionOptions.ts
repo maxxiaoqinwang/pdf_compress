@@ -1,5 +1,9 @@
 import type { ReadingMode } from "./storage";
 
+type RenditionPerformanceOptions = {
+  lowMemoryScroll?: boolean;
+};
+
 type ReaderRenditionOptions = {
   width: string;
   height: string;
@@ -7,13 +11,32 @@ type ReaderRenditionOptions = {
   manager: "continuous" | "default";
   spread: "none";
   afterScrolledTimeout?: number;
+  offset?: number;
+  offsetDelta?: number;
 };
 
-export function getRenditionOptions(readingMode: ReadingMode): ReaderRenditionOptions {
+/**
+ * epub.js' continuous manager normally preloads the neighbouring spine items.
+ * That is useful for small books, but several decoded comic pages can exhaust a
+ * mobile browser's memory. Low-memory mode uses a narrow look-ahead window so
+ * epub.js appends sections near the viewport and trims older iframe views.
+ */
+export function getRenditionOptions(
+  readingMode: ReadingMode,
+  { lowMemoryScroll = false }: RenditionPerformanceOptions = {}
+): ReaderRenditionOptions {
   const scrollingOptions =
     readingMode === "scroll"
       ? {
-          afterScrolledTimeout: 80
+          afterScrolledTimeout: 100,
+          ...(lowMemoryScroll
+            ? {
+                // Keep only a small look-ahead window. epub.js appends
+                // sections near the viewport and trims older iframe views.
+                offset: 240,
+                offsetDelta: 0
+              }
+            : {})
         }
       : {};
 

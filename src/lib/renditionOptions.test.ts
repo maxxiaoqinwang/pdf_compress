@@ -6,11 +6,20 @@ describe("getRenditionOptions", () => {
     expect(getRenditionOptions("scroll")).toMatchObject({
       flow: "scrolled",
       manager: "continuous",
-      afterScrolledTimeout: 80,
+      afterScrolledTimeout: 100,
       spread: "none"
     });
     expect(getRenditionOptions("scroll")).not.toHaveProperty("offset");
     expect(getRenditionOptions("scroll")).not.toHaveProperty("offsetDelta");
+  });
+
+  it("uses demand-driven continuous loading for large or fixed-layout books", () => {
+    expect(getRenditionOptions("scroll", { lowMemoryScroll: true })).toMatchObject({
+      flow: "scrolled",
+      manager: "continuous",
+      offset: 240,
+      offsetDelta: 0
+    });
   });
 
   it("uses the default paginated renderer for page mode", () => {

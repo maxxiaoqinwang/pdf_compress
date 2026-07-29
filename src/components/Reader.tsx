@@ -18,6 +18,7 @@ import {
   type ReadingMode
 } from "../lib/storage";
 import {
+  getEstimatedSingleImageHeight,
   getImageScaleStylesheet,
   getLocationPercentage,
   getLocationSpineIndex,
@@ -33,6 +34,11 @@ import {
   isTapGesture,
   type PageClickDirection
 } from "../lib/readerInteraction";
+import {
+  attachLazyResourceCleanup,
+  installLazyEpubResourceLoading,
+  type LazyEpubResourceController
+} from "../lib/lazyEpubResources";
 import { getRenditionOptions } from "../lib/renditionOptions";
 import { primeContinuousScroll } from "../lib/scrollAdvance";
 
@@ -56,13 +62,14 @@ type ReaderDocument = Document & {
 
 const COMPACT_READER_QUERY =
   "(max-width: 760px), (pointer: coarse) and (max-height: 500px)";
-const LARGE_BOOK_THRESHOLD = 50 * 1024 * 1024;
+const LAZY_RESOURCE_THRESHOLD = 32 * 1024 * 1024;
 const PROGRESS_SAVE_DELAY = 650;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const bookRef = useRef<Book | null>(null);
+  const lazyResourcesRef = useRef<LazyEpubResourceController | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const pageTurnLockedRef = useRef(false);
   const statusRef = useRef<LoadStatus>("loading");
@@ -89,7 +96,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   });
   const uiActionsRef = useRef({
     toggleControls: () => {},
-    hideControls: () => {}
+    showControls: () => {}
   });
 
   const [book, setBook] = useState<Book | null>(null);
@@ -136,9 +143,9 @@ export function Reader({ file, onClose }: ReaderProps) {
         setControlsVisible((visible) => !visible);
       }
     },
-    hideControls: () => {
-      if (isCompactViewport && activeSheetRef.current === null) {
-        setControlsVisible(false);
+    showControls: () => {
+      if (isCompactViewport) {
+        setControlsVisible(true);
       }
     }
   };
@@ -161,13 +168,16 @@ export function Reader({ file, onClose }: ReaderProps) {
       return undefined;
     }
 
-    if (status !== "ready" || activeSheet || !controlsVisible) {
+    // Continuous scroll is the mode where the user most often needs to
+    // reopen settings. Keep its chrome visible unless the user explicitly
+    // hides it; the floating menu handle below can always restore it.
+    if (readingMode === "scroll" || status !== "ready" || activeSheet || !controlsVisible) {
       return undefined;
     }
 
     const timer = window.setTimeout(() => setControlsVisible(false), 4500);
     return () => window.clearTimeout(timer);
-  }, [activeSheet, controlsVisible, isCompactViewport, status]);
+  }, [activeSheet, controlsVisible, isCompactViewport, readingMode, status]);
 
   useEffect(() => {
     const marker = `epub-reader-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -229,6 +239,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   useEffect(() => {
     let cancelled = false;
     let loadedBook: Book | null = null;
+    let lazyResources: LazyEpubResourceController | null = null;
 
     setStatus("loading");
     setMessage(getOpeningMessage(file));
@@ -242,17 +253,35 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     async function loadBook() {
       try {
-        const [buffer, epubModule] = await Promise.all([file.arrayBuffer(), import("epubjs")]);
+        const useLazyResources = file.size >= LAZY_RESOURCE_THRESHOLD;
+        // JSZip accepts Blob/File input directly in browsers. Keeping the
+        // original File for large books avoids an additional full-size
+        // ArrayBuffer allocation before the archive is opened.
+        const [bookInput, epubModule] = await Promise.all([
+          useLazyResources ? Promise.resolve(file) : file.arrayBuffer(),
+          import("epubjs")
+        ]);
         if (cancelled) {
           return;
         }
 
-        loadedBook = epubModule.default(buffer, { replacements: "blobUrl" });
+        // Create the Book before opening it so the lazy hook can disable
+        // epub.js' eager CSS/asset replacement and observe the first section.
+        loadedBook = epubModule.default({
+          replacements: useLazyResources ? "none" : "blobUrl"
+        });
+        registerEarlyImagePageGuard(loadedBook);
+        if (useLazyResources) {
+          lazyResources = installLazyEpubResourceLoading(loadedBook);
+          lazyResourcesRef.current = lazyResources;
+        }
         bookRef.current = loadedBook;
 
+        const opening = loadedBook.open(bookInput as unknown as ArrayBuffer);
         const [metadata, navigation] = await Promise.all([
           loadedBook.loaded.metadata,
-          loadedBook.loaded.navigation
+          loadedBook.loaded.navigation,
+          opening
         ]);
         if (cancelled) {
           return;
@@ -263,6 +292,17 @@ export function Reader({ file, onClose }: ReaderProps) {
         setTitle(typeof metadata.title === "string" && metadata.title ? metadata.title : file.name);
         setToc(navigation.toc ?? []);
       } catch {
+        lazyResources?.destroy();
+        if (lazyResourcesRef.current === lazyResources) {
+          lazyResourcesRef.current = null;
+        }
+        loadedBook?.destroy();
+        if (bookRef.current === loadedBook) {
+          bookRef.current = null;
+        }
+        lazyResources = null;
+        loadedBook = null;
+
         if (!cancelled) {
           setStatus("error");
           setMessage("无法打开这个文件，请确认它是完整的 EPUB 文件。");
@@ -278,8 +318,16 @@ export function Reader({ file, onClose }: ReaderProps) {
         window.clearTimeout(progressSaveTimerRef.current);
         progressSaveTimerRef.current = null;
       }
-      renditionRef.current?.destroy();
+      const activeRendition = renditionRef.current;
       renditionRef.current = null;
+      if (activeRendition) {
+        activeRendition.destroy();
+        detachRenditionFromBook(loadedBook, activeRendition);
+      }
+      lazyResources?.destroy();
+      if (lazyResourcesRef.current === lazyResources) {
+        lazyResourcesRef.current = null;
+      }
       loadedBook?.destroy();
       if (bookRef.current === loadedBook) {
         bookRef.current = null;
@@ -288,7 +336,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   }, [bookKey, file, savedProgress.percentage]);
 
   useEffect(() => {
-    if (!book || file.size > LARGE_BOOK_THRESHOLD || bookLayoutRef.current === "pre-paginated") {
+    if (!book || file.size >= LAZY_RESOURCE_THRESHOLD || isPrePaginatedBook(book)) {
       return undefined;
     }
 
@@ -321,12 +369,29 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
 
     let cancelled = false;
-    let scrollContainer: HTMLElement | null = null;
-    const handleReaderScroll = () => uiActionsRef.current.hideControls();
-    const rendition = book.renderTo(host, getRenditionOptions(readingMode));
+    let detachLazyResourceCleanup = () => {};
+    const lazyResources = lazyResourcesRef.current;
+    const lowMemoryScroll =
+      readingMode === "scroll" &&
+      (file.size >= LAZY_RESOURCE_THRESHOLD || isPrePaginatedBook(book));
+    const rendition = book.renderTo(
+      host,
+      getRenditionOptions(readingMode, { lowMemoryScroll })
+    );
+
+    if (lazyResources) {
+      detachLazyResourceCleanup = attachLazyResourceCleanup(rendition, lazyResources);
+    }
+
     renditionRef.current = rendition;
     setStatus("loading");
-    setMessage(readingMode === "scroll" ? "正在切换到滚动阅读…" : "正在切换到分页阅读…");
+    setMessage(
+      lowMemoryScroll
+        ? "正在按需加载大文件，请稍候…"
+        : readingMode === "scroll"
+          ? "正在切换到滚动阅读…"
+          : "正在切换到分页阅读…"
+    );
 
     registerContentEnhancements(
       rendition,
@@ -364,11 +429,10 @@ export function Reader({ file, onClose }: ReaderProps) {
           return;
         }
 
-        scrollContainer = getRenditionScrollContainer(rendition);
-        if (readingMode === "scroll") {
-          scrollContainer?.addEventListener("scroll", handleReaderScroll, {
-            passive: true
-          });
+        if (readingMode === "scroll" && !lowMemoryScroll) {
+          // Small text-heavy books can afford a larger look-ahead window.
+          // Memory-sensitive books rely on the continuous manager's bounded
+          // offset instead of forcing additional sections into memory here.
           void primeContinuousScroll(rendition);
         }
 
@@ -387,15 +451,19 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     return () => {
       cancelled = true;
-      scrollContainer?.removeEventListener("scroll", handleReaderScroll);
       rendition.off("relocated", handleRelocated);
-      rendition.destroy();
+      // Keep the cleanup wrapper installed while epub.js clears its iframe
+      // views, then release anything left as a defensive fallback.
       if (renditionRef.current === rendition) {
         renditionRef.current = null;
+        rendition.destroy();
+        detachRenditionFromBook(book, rendition);
       }
+      detachLazyResourceCleanup();
+      lazyResources?.resetRenderedSections();
       host.replaceChildren();
     };
-  }, [book, readingMode]);
+  }, [book, file.size, readingMode]);
 
   useEffect(() => {
     const rendition = renditionRef.current;
@@ -538,7 +606,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   }
 
   function openSheet(sheet: Exclude<ReaderSheet, null>) {
-    setControlsVisible(true);
+    uiActionsRef.current.showControls();
     if (!activeSheetRef.current) {
       window.history.pushState({ ...window.history.state, __epubReaderSheet: sheet }, "");
       sheetHistoryActiveRef.current = true;
@@ -571,13 +639,19 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
   }
 
+  function selectReadingMode(mode: ReadingMode) {
+    uiActionsRef.current.showControls();
+    setReadingMode(mode);
+  }
+
   function handleStageClick(event: React.MouseEvent<HTMLDivElement>) {
     if (event.target === event.currentTarget || event.target === mountRef.current) {
       uiActionsRef.current.toggleControls();
     }
   }
 
-  const chromeIsVisible = !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
+  const chromeIsVisible =
+    !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
 
   return (
     <section
@@ -622,6 +696,18 @@ export function Reader({ file, onClose }: ReaderProps) {
           <div ref={mountRef} className="rendition-root" />
         </div>
       </div>
+
+      {isCompactViewport && status === "ready" && !chromeIsVisible ? (
+        <button
+          className="reader-controls-reveal"
+          type="button"
+          aria-label="显示阅读控制"
+          onClick={() => uiActionsRef.current.showControls()}
+        >
+          <span aria-hidden="true">⌃</span>
+          菜单
+        </button>
+      ) : null}
 
       <nav className="bottom-toolbar" aria-label="阅读控制" aria-hidden={!chromeIsVisible}>
         <button
@@ -689,9 +775,9 @@ export function Reader({ file, onClose }: ReaderProps) {
                 />
                 <SettingStepper
                   label="图片缩放"
-                  value={`${imageScale}%`}
-                  canDecrease={imageScale > 100}
-                  canIncrease={imageScale < 400}
+                  value={readingMode === "page" ? `${imageScale}%` : "分页模式"}
+                  canDecrease={readingMode === "page" && imageScale > 100}
+                  canIncrease={readingMode === "page" && imageScale < 400}
                   onDecrease={() => setImageScale((value) => Math.max(100, value - 25))}
                   onIncrease={() => setImageScale((value) => Math.min(400, value + 25))}
                 />
@@ -702,7 +788,7 @@ export function Reader({ file, onClose }: ReaderProps) {
                       className={readingMode === "scroll" ? "selected" : ""}
                       type="button"
                       aria-pressed={readingMode === "scroll"}
-                      onClick={() => setReadingMode("scroll")}
+                      onClick={() => selectReadingMode("scroll")}
                     >
                       滚动
                     </button>
@@ -710,7 +796,7 @@ export function Reader({ file, onClose }: ReaderProps) {
                       className={readingMode === "page" ? "selected" : ""}
                       type="button"
                       aria-pressed={readingMode === "page"}
-                      onClick={() => setReadingMode("page")}
+                      onClick={() => selectReadingMode("page")}
                     >
                       分页
                     </button>
@@ -939,9 +1025,11 @@ function getSpineItemCount(book: Book | null): number | undefined {
   return Array.isArray(items) ? items.length : undefined;
 }
 
-function getRenditionScrollContainer(rendition: Rendition): HTMLElement | null {
-  const manager = (rendition as unknown as { manager?: { container?: unknown } }).manager;
-  return manager?.container instanceof HTMLElement ? manager.container : null;
+function detachRenditionFromBook(book: Book | null, rendition: Rendition) {
+  const bookWithRendition = book as unknown as { rendition?: Rendition } | null;
+  if (bookWithRendition?.rendition === rendition) {
+    delete bookWithRendition.rendition;
+  }
 }
 
 function getNavigationLabel(direction: PageClickDirection, readingMode: ReadingMode): string {
@@ -956,8 +1044,54 @@ function readCompactViewport(): boolean {
   return typeof window !== "undefined" && Boolean(window.matchMedia?.(COMPACT_READER_QUERY).matches);
 }
 
+function registerEarlyImagePageGuard(book: Book) {
+  book.spine.hooks.content.register((document: Document) => {
+    const root = document.documentElement;
+    const body = document.querySelector("body");
+    const head = document.querySelector("head");
+    if (!root || !body || !head) {
+      return;
+    }
+
+    const mediaElements = body.querySelectorAll("img, svg");
+    const textProbe = body.cloneNode(true) as Element;
+    textProbe.querySelectorAll("img, svg").forEach((element) => element.remove());
+    const meaningfulText = textProbe.textContent?.replace(/\s+/g, "") ?? "";
+    if (mediaElements.length !== 1 || meaningfulText.length > 0) {
+      return;
+    }
+
+    root.classList.add("reader-image-source");
+    if (document.getElementById("reader-initial-image-guard")) {
+      return;
+    }
+
+    const style = document.createElementNS("http://www.w3.org/1999/xhtml", "style");
+    style.id = "reader-initial-image-guard";
+    style.textContent = `
+      html.reader-image-source,
+      html.reader-image-source body {
+        min-height: 100vh !important;
+      }
+    `;
+    head.appendChild(style);
+  });
+}
+
+function isPrePaginatedBook(book: Book): boolean {
+  const candidate = book as unknown as {
+    package?: { metadata?: { layout?: unknown } };
+    displayOptions?: { fixedLayout?: unknown };
+  };
+
+  return (
+    candidate.package?.metadata?.layout === "pre-paginated" ||
+    candidate.displayOptions?.fixedLayout === "true"
+  );
+}
+
 function getOpeningMessage(file: File): string {
-  return file.size > LARGE_BOOK_THRESHOLD
+  return file.size >= LAZY_RESOURCE_THRESHOLD
     ? "文件较大，正在本机读取，请稍候…"
     : "正在打开文件…";
 }
@@ -984,10 +1118,18 @@ function applyImageScaleToContent(
   settings: ReaderSettings,
   syncHeight = true
 ) {
-  const isSingleImagePage = markSingleImagePage(contents, settings.imageScale, settings.readingMode);
+  // Continuous image pages always fit the reading width. Applying a saved
+  // 200-400% page zoom to several preloaded comic pages can exhaust mobile
+  // memory; zoom remains available in paginated mode.
+  const effectiveImageScale = settings.readingMode === "scroll" ? 100 : settings.imageScale;
+  const isSingleImagePage = markSingleImagePage(
+    contents,
+    effectiveImageScale,
+    settings.readingMode
+  );
   void contents
     .addStylesheetCss(
-      getImageScaleStylesheet(settings.imageScale),
+      getImageScaleStylesheet(effectiveImageScale),
       "reader-image-scale"
     )
     .catch(() => {
@@ -998,7 +1140,7 @@ function applyImageScaleToContent(
       contents,
       settings.readingMode,
       isSingleImagePage,
-      settings.imageScale
+      effectiveImageScale
     );
   }
 }
@@ -1064,11 +1206,32 @@ function syncSingleImageViewHeight(
   const applyHeight = () => {
     updateSingleImagePageWidth(contents, image, imageScale);
     const imageHeight = image.getBoundingClientRect().height;
-    const pageHeight =
-      viewElement.parentElement?.getBoundingClientRect().height ||
-      viewElement.getBoundingClientRect().height;
+    const parentBounds = viewElement.parentElement?.getBoundingClientRect();
+    const viewBounds = viewElement.getBoundingClientRect();
+    const frameBounds = frameElement.getBoundingClientRect();
+    const pageHeight = parentBounds?.height || viewBounds.height || contents.window.innerHeight;
+    const frameWidth =
+      frameBounds.width || parentBounds?.width || viewBounds.width || contents.window.innerWidth;
+    const viewportContent = doc
+      .querySelector("meta[name='viewport']")
+      ?.getAttribute("content");
+    const estimatedImageHeight = getEstimatedSingleImageHeight({
+      viewportContent,
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+      attributeWidth: Number(image.getAttribute("width")),
+      attributeHeight: Number(image.getAttribute("height")),
+      frameWidth,
+      imageScale,
+      fallbackHeight: pageHeight
+    });
+    const stableImageHeight = imageHeight > 1 ? imageHeight : estimatedImageHeight ?? pageHeight;
     const pageFrameHeight = getPageImageFrameHeight(readingMode, true, pageHeight);
-    const scrollViewHeight = getScrollImagePageViewHeight(readingMode, true, imageHeight);
+    const scrollViewHeight = getScrollImagePageViewHeight(
+      readingMode,
+      true,
+      stableImageHeight
+    );
     const targetHeight = pageFrameHeight ?? scrollViewHeight;
 
     if (!targetHeight) {
@@ -1080,6 +1243,9 @@ function syncSingleImageViewHeight(
     viewElement.style.setProperty("height", height);
   };
 
+  // Set a non-zero placeholder synchronously, before epub.js continuous fill()
+  // measures the view. The next frame and image load refine it with real data.
+  applyHeight();
   let animationFrame = contents.window.requestAnimationFrame(applyHeight);
   const scheduleHeight = () => {
     contents.window.cancelAnimationFrame(animationFrame);

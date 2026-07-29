@@ -44,6 +44,17 @@ type PinchImageScaleInput = {
   currentDistance: number;
 };
 
+type EstimatedSingleImageHeightInput = {
+  viewportContent?: string | null;
+  naturalWidth?: number | null;
+  naturalHeight?: number | null;
+  attributeWidth?: number | null;
+  attributeHeight?: number | null;
+  frameWidth: number;
+  imageScale?: number;
+  fallbackHeight?: number;
+};
+
 export function getPageClickDirection({
   readingMode,
   gripMode = "right",
@@ -140,6 +151,37 @@ export function getImageScaleStylesheet(imageScale: number): string {
         touch-action: pan-x pan-y !important;
       }
     `;
+}
+
+/**
+ * Estimate a fixed-layout image page height before the image has decoded.
+ * epub.js measures each continuous view while it is being added. Without a
+ * non-zero placeholder, image-heavy books can look like a stack of 0px views
+ * and the manager may try to load many spine items at once.
+ */
+export function getEstimatedSingleImageHeight({
+  viewportContent,
+  naturalWidth,
+  naturalHeight,
+  attributeWidth,
+  attributeHeight,
+  frameWidth,
+  imageScale = 100,
+  fallbackHeight = 0
+}: EstimatedSingleImageHeightInput): number | null {
+  const viewportSize = readViewportSize(viewportContent);
+  const naturalSize = readSizePair(naturalWidth, naturalHeight);
+  const attributeSize = readSizePair(attributeWidth, attributeHeight);
+  const sourceSize = viewportSize ?? naturalSize ?? attributeSize;
+  const usableFrameWidth = readPositiveNumber(frameWidth);
+  const scale = normalizeImageScale(imageScale) / 100;
+
+  if (sourceSize && usableFrameWidth !== null) {
+    return Math.max(1, Math.ceil(usableFrameWidth * (sourceSize.height / sourceSize.width) * scale));
+  }
+
+  const safeFallback = readPositiveNumber(fallbackHeight);
+  return safeFallback === null ? null : Math.ceil(safeFallback);
 }
 
 export function getScaledFixedLayoutWidth(
@@ -275,16 +317,40 @@ export function getLocationSpineIndex(location: unknown): number | null {
 }
 
 function readViewportWidth(viewportContent: string | null | undefined): number | null {
+  return readViewportDimension(viewportContent, "width");
+}
+
+function readViewportSize(
+  viewportContent: string | null | undefined
+): { width: number; height: number } | null {
+  const width = readViewportDimension(viewportContent, "width");
+  const height = readViewportDimension(viewportContent, "height");
+  return readSizePair(width, height);
+}
+
+function readViewportDimension(
+  viewportContent: string | null | undefined,
+  dimension: "width" | "height"
+): number | null {
   if (!viewportContent) {
     return null;
   }
 
-  const widthMatch = viewportContent.match(/(?:^|[,]?\s*)width\s*=\s*([0-9.]+)/i);
-  if (!widthMatch) {
-    return null;
-  }
+  const match = viewportContent.match(
+    new RegExp(`(?:^|[,]?\\s*)${dimension}\\s*=\\s*([0-9.]+)`, "i")
+  );
+  return match ? readPositiveNumber(Number(match[1])) : null;
+}
 
-  return readPositiveNumber(Number(widthMatch[1]));
+function readSizePair(
+  width: number | null | undefined,
+  height: number | null | undefined
+): { width: number; height: number } | null {
+  const safeWidth = readPositiveNumber(width);
+  const safeHeight = readPositiveNumber(height);
+  return safeWidth === null || safeHeight === null
+    ? null
+    : { width: safeWidth, height: safeHeight };
 }
 
 function readPositiveNumber(value: unknown): number | null {
