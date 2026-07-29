@@ -27,6 +27,13 @@ describe("getSelectedFileAction", () => {
     });
   });
 
+  it("does not accept an arbitrary zip file as an epub", () => {
+    expect(getSelectedFileAction(makeFile("archive.zip", "application/zip"))).toEqual({
+      ok: false,
+      message: "暂时无法处理这个文件。"
+    });
+  });
+
   it("routes pdf files to direct download", () => {
     expect(getSelectedFileAction(makeFile("report.pdf", "application/pdf"))).toEqual({
       ok: true,
@@ -37,14 +44,14 @@ describe("getSelectedFileAction", () => {
   it("rejects a missing file", () => {
     expect(getSelectedFileAction(null)).toEqual({
       ok: false,
-      message: "Select a file first."
+      message: "请选择一个文件。"
     });
   });
 
   it("rejects unsupported files", () => {
     expect(getSelectedFileAction(makeFile("notes.txt", "text/plain"))).toEqual({
       ok: false,
-      message: "Unable to process this file."
+      message: "暂时无法处理这个文件。"
     });
   });
 });

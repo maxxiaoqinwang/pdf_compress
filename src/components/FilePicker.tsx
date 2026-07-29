@@ -1,14 +1,18 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { getSelectedFileAction } from "../lib/fileValidation";
+import { isWechatBrowser } from "../lib/wechat";
 
 type FilePickerProps = {
   onFileSelected: (file: File) => void;
   onPdfSelected?: (file: File) => void;
 };
 
+const ACCEPTED_FILE_TYPES = ".pdf,.epub,.tks,application/pdf,application/epub+zip";
+
 export function FilePicker({ onFileSelected, onPdfSelected = downloadOriginalPdf }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inWechat = useMemo(() => isWechatBrowser(), []);
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
@@ -16,11 +20,12 @@ export function FilePicker({ onFileSelected, onPdfSelected = downloadOriginalPdf
 
     if (!result.ok) {
       setError(result.message);
+      event.target.value = "";
       return;
     }
 
     if (!file) {
-      setError("Select a file first.");
+      setError("请选择一个文件。");
       return;
     }
 
@@ -43,6 +48,12 @@ export function FilePicker({ onFileSelected, onPdfSelected = downloadOriginalPdf
         to a server.
       </p>
 
+      {inWechat ? (
+        <p className="wechat-notice" role="note">
+          如果微信内无法选择文件，请点击右上角菜单，选择“在浏览器打开”。
+        </p>
+      ) : null}
+
       <div className="picker-actions">
         <button className="primary-action" type="button" onClick={() => inputRef.current?.click()}>
           Select file
@@ -51,11 +62,17 @@ export function FilePicker({ onFileSelected, onPdfSelected = downloadOriginalPdf
           ref={inputRef}
           className="hidden-input"
           type="file"
+          accept={ACCEPTED_FILE_TYPES}
+          aria-label="Select file"
           onChange={handleFileChange}
         />
       </div>
 
-      {error ? <p className="error-message">{error}</p> : null}
+      {error ? (
+        <p className="error-message" role="alert">
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -68,5 +85,5 @@ function downloadOriginalPdf(file: File) {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

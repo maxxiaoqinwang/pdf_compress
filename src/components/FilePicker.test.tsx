@@ -7,7 +7,7 @@ function makeFile(name: string, type = "") {
 }
 
 describe("FilePicker", () => {
-  it("presents itself as a pdf compression tool without reader copy", () => {
+  it("presents itself as a pdf compression tool without visible reader copy", () => {
     const { container } = render(<FilePicker onFileSelected={() => {}} />);
 
     expect(screen.getByRole("heading", { name: "PDF Compress" })).toBeInTheDocument();
@@ -15,10 +15,12 @@ describe("FilePicker", () => {
     expect(container).not.toHaveTextContent(/epub|reader|book/i);
   });
 
-  it("does not restrict the native file picker by file type", () => {
+  it("limits the native picker to supported local file types", () => {
     const { container } = render(<FilePicker onFileSelected={() => {}} />);
+    const input = container.querySelector('input[type="file"]');
 
-    expect(container.querySelector('input[type="file"]')).not.toHaveAttribute("accept");
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".pdf"));
+    expect(input).toHaveAttribute("accept", expect.stringContaining(".epub"));
   });
 
   it("passes pdf files to the pdf handler instead of opening the reader", () => {
