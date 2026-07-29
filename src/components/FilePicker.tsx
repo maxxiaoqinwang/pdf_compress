@@ -7,8 +7,6 @@ type FilePickerProps = {
   onPdfSelected?: (file: File) => void;
 };
 
-const ACCEPTED_FILE_TYPES = ".pdf,.epub,.tks,application/pdf,application/epub+zip";
-
 export function FilePicker({ onFileSelected, onPdfSelected = downloadOriginalPdf }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +60,6 @@ export function FilePicker({ onFileSelected, onPdfSelected = downloadOriginalPdf
           ref={inputRef}
           className="hidden-input"
           type="file"
-          accept={ACCEPTED_FILE_TYPES}
           aria-label="Select file"
           onChange={handleFileChange}
         />

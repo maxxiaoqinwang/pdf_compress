@@ -15,12 +15,11 @@ describe("FilePicker", () => {
     expect(container).not.toHaveTextContent(/epub|reader|book/i);
   });
 
-  it("limits the native picker to supported local file types", () => {
+  it("leaves the native picker unrestricted so mobile browsers can show every file", () => {
     const { container } = render(<FilePicker onFileSelected={() => {}} />);
     const input = container.querySelector('input[type="file"]');
 
-    expect(input).toHaveAttribute("accept", expect.stringContaining(".pdf"));
-    expect(input).toHaveAttribute("accept", expect.stringContaining(".epub"));
+    expect(input).not.toHaveAttribute("accept");
   });
 
   it("passes pdf files to the pdf handler instead of opening the reader", () => {
