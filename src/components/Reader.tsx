@@ -36,6 +36,7 @@ import {
 } from "../lib/readerInteraction";
 import { installFileBackedEpubArchive } from "../lib/fileBackedEpubArchive";
 import { readBlobAsArrayBuffer } from "../lib/blobReader";
+import { applyContentStylesheet } from "../lib/contentStylesheet";
 import {
   attachLazyResourceCleanup,
   installLazyEpubResourceLoading,
@@ -1273,14 +1274,11 @@ function applyImageScaleToContent(
     effectiveImageScale,
     settings.readingMode
   );
-  void contents
-    .addStylesheetCss(
-      getImageScaleStylesheet(effectiveImageScale),
-      "reader-image-scale"
-    )
-    .catch(() => {
-      // A rendition can be destroyed while the stylesheet promise is pending.
-    });
+  applyContentStylesheet(
+    contents,
+    getImageScaleStylesheet(effectiveImageScale),
+    "reader-image-scale"
+  );
   if (syncHeight) {
     syncSingleImageViewHeight(
       contents,

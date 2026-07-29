@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => {
     off: vi.fn(),
     display: vi.fn(async () => undefined),
     currentLocation: vi.fn(() => ({ start: { index: 0, cfi: "epubcfi(/6/2)" } })),
-    getContents: vi.fn(() => []),
+    getContents: vi.fn((): unknown[] => []),
     next: vi.fn(async () => undefined),
     prev: vi.fn(async () => undefined),
     destroy: vi.fn()
@@ -82,7 +82,10 @@ function createImageContents() {
     document: imageDocument,
     window,
     documentElement: imageDocument.documentElement,
-    addStylesheetCss: vi.fn(async () => undefined)
+    // epub.js 0.3.93 returns a synchronous boolean in browsers even though
+    // its declaration file says Promise<boolean>. Keep the mock realistic so
+    // a direct `.catch()` regression is caught.
+    addStylesheetCss: vi.fn(() => true)
   };
 }
 
@@ -102,6 +105,7 @@ describe("Reader mobile scroll controls", () => {
     vi.clearAllMocks();
     mocks.rendition.manager.container = document.createElement("div");
     mocks.book.replacements = vi.fn(async () => undefined);
+    mocks.rendition.getContents.mockReturnValue([]);
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -186,6 +190,46 @@ describe("Reader mobile scroll controls", () => {
     expect(increaseImageScale).toBeEnabled();
     fireEvent.click(increaseImageScale);
     expect(screen.getByText("125%")).toBeInTheDocument();
+  });
+
+  it("keeps the reader mounted when image scale is changed with the real synchronous stylesheet API", async () => {
+    const { file } = createTestFile("comic-scale.epub", 5);
+    const contents = createImageContents();
+    mocks.rendition.getContents.mockReturnValue([contents]);
+
+    render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((value: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    let contentHookError: unknown;
+    await act(async () => {
+      try {
+        contentHook?.(contents);
+      } catch (error) {
+        contentHookError = error;
+      }
+      await Promise.resolve();
+    });
+    expect(contentHookError).toBeUndefined();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "设置" }));
+      await Promise.resolve();
+    });
+    const increaseImageScale = await screen.findByRole("button", { name: "增大图片缩放" });
+    await act(async () => {
+      fireEvent.click(increaseImageScale);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("125%")).toBeInTheDocument();
+      expect(screen.getByLabelText("EPUB 阅读器")).toBeInTheDocument();
+      expect(contents.addStylesheetCss).toHaveBeenCalled();
+    });
   });
 
   it("restores reliable left and right page tap zones in paginated mode", async () => {
