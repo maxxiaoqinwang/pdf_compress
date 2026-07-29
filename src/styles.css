@@ -295,6 +295,35 @@ h1 {
   height: calc(100vh - 180px);
 }
 
+.reader-hotzones {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.reader-hotzone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  opacity: 0;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.reader-hotzone.left {
+  left: 0;
+}
+
+.reader-hotzone.right {
+  right: 0;
+}
+
 .bottom-toolbar {
   display: grid;
   grid-template-columns: 0.86fr 0.86fr 0.72fr 1.38fr 0.86fr 0.86fr;

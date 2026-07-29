@@ -12,10 +12,13 @@ import {
 import {
   getImageScaleStylesheet,
   getPageImageFrameHeight,
+  getPinchImageScale,
   getPageClickDirection,
   getProgressPercent,
   getScrollImagePageViewHeight,
   getScaledFixedLayoutWidth,
+  getToolbarPageControls,
+  getTouchDistance,
   isTapGesture
 } from "../lib/readerInteraction";
 import { formatReadingModeLabel } from "../lib/readerLabels";
@@ -33,6 +36,8 @@ type ReaderSettings = Omit<ReaderState, "cfi">;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const lastHotzoneTouchRef = useRef(0);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const savedState = useMemo(() => loadReaderState(), []);
@@ -58,6 +63,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [theme, setTheme] = useState<ReaderTheme>(savedState.theme);
   const [activeSheet, setActiveSheet] = useState<ReaderSheet>(null);
   const [progressPercent, setProgressPercent] = useState(0);
+  const pageControls = getToolbarPageControls(gripMode);
 
   latestSettingsRef.current = { fontScale, gripMode, imageScale, lineHeight, readingMode, theme };
 
@@ -83,8 +89,11 @@ export function Reader({ file, onClose }: ReaderProps) {
 
         bookRef.current = book;
         renditionRef.current = rendition;
-        registerContentEnhancements(rendition, latestSettingsRef, () =>
-          updateReaderProgress(hostElement, rendition, setProgressPercent, getSpineItemCount(book))
+        registerContentEnhancements(
+          rendition,
+          latestSettingsRef,
+          () => updateReaderProgress(hostElement, rendition, setProgressPercent, getSpineItemCount(book)),
+          (nextImageScale) => setImageScale(nextImageScale)
         );
         registerThemes(rendition);
         applyReaderStyle(rendition, theme, fontScale, lineHeight, imageScale, readingMode, gripMode);
@@ -211,6 +220,43 @@ export function Reader({ file, onClose }: ReaderProps) {
     void turnPage(direction);
   }
 
+  function turnFromHotzone(side: "left" | "right") {
+    const stageElement = stageRef.current;
+    if (!stageElement) {
+      return;
+    }
+
+    const bounds = stageElement.getBoundingClientRect();
+    const clientX = side === "left" ? bounds.left + 1 : bounds.right - 1;
+    const direction = getPageClickDirection({
+      readingMode,
+      gripMode,
+      clientX,
+      boundsLeft: bounds.left,
+      boundsWidth: bounds.width
+    });
+
+    if (direction) {
+      void turnPage(direction);
+    }
+  }
+
+  function handleHotzoneTouchEnd(side: "left" | "right", event: React.TouchEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    lastHotzoneTouchRef.current = Date.now();
+    turnFromHotzone(side);
+  }
+
+  function handleHotzoneClick(side: "left" | "right", event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - lastHotzoneTouchRef.current < 500) {
+      return;
+    }
+    turnFromHotzone(side);
+  }
+
   return (
     <section className={`reader-shell ${theme} ${readingMode}`} aria-label="Document preview">
       <header className="reader-topbar">
@@ -235,9 +281,29 @@ export function Reader({ file, onClose }: ReaderProps) {
       </div>
 
       <div className="reader-layout">
-        <div className="reader-stage" onClick={handleStageClick}>
+        <div ref={stageRef} className="reader-stage" onClick={handleStageClick}>
           {status !== "ready" ? <div className={`reader-message ${status}`}>{message}</div> : null}
           <div ref={mountRef} className="rendition-root" />
+          {status === "ready" && readingMode === "page" ? (
+            <div className="reader-hotzones" aria-label="分页热区">
+              <button
+                className="reader-hotzone left"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "下一页" : "上一页"}
+                onClick={(event) => handleHotzoneClick("left", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
+              />
+              <button
+                className="reader-hotzone right"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "上一页" : "下一页"}
+                onClick={(event) => handleHotzoneClick("right", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -245,8 +311,8 @@ export function Reader({ file, onClose }: ReaderProps) {
         <button type="button" onClick={() => setActiveSheet("toc")}>
           目录
         </button>
-        <button type="button" onClick={() => void turnPage("prev")}>
-          上章
+        <button type="button" onClick={() => void turnPage(pageControls[0].direction)}>
+          {pageControls[0].label}
         </button>
         <button type="button" onClick={() => setActiveSheet("settings")}>
           Aa
@@ -257,8 +323,8 @@ export function Reader({ file, onClose }: ReaderProps) {
         <button type="button" onClick={toggleTheme}>
           {theme === "paper" ? "夜间" : "日间"}
         </button>
-        <button type="button" onClick={() => void turnPage("next")}>
-          下章
+        <button type="button" onClick={() => void turnPage(pageControls[1].direction)}>
+          {pageControls[1].label}
         </button>
       </nav>
 
@@ -285,7 +351,7 @@ export function Reader({ file, onClose }: ReaderProps) {
                   label="图片"
                   value={`${imageScale}%`}
                   onDecrease={() => setImageScale((value) => Math.max(100, value - 25))}
-                  onIncrease={() => setImageScale((value) => Math.min(250, value + 25))}
+                  onIncrease={() => setImageScale((value) => Math.min(400, value + 25))}
                 />
                 <SettingStepper
                   label="行距"
@@ -399,11 +465,12 @@ function SettingStepper({ label, value, onDecrease, onIncrease }: SettingStepper
 function registerContentEnhancements(
   rendition: Rendition,
   settingsRef: { current: ReaderSettings },
-  onPageTurn: () => void
+  onPageTurn: () => void,
+  onImageScaleChange: (nextImageScale: number) => void
 ) {
   rendition.hooks.content.register((contents: Contents) => {
     applyImageScaleToContent(contents, settingsRef.current);
-    installContentPointerBehavior(contents, rendition, settingsRef, onPageTurn);
+    installContentPointerBehavior(contents, rendition, settingsRef, onPageTurn, onImageScaleChange);
   });
 }
 
@@ -550,7 +617,8 @@ function installContentPointerBehavior(
   contents: Contents,
   rendition: Rendition,
   settingsRef: { current: ReaderSettings },
-  onPageTurn: () => void
+  onPageTurn: () => void,
+  onImageScaleChange: (nextImageScale: number) => void
 ) {
   const doc = contents.document as Document & {
     __readerPointerBehaviorInstalled?: boolean;
@@ -565,7 +633,9 @@ function installContentPointerBehavior(
   let lastX = 0;
   let lastY = 0;
   let touchStart: { x: number; y: number } | null = null;
+  let pinchStart: { distance: number; imageScale: number } | null = null;
   let suppressNextClick = false;
+  const touchListenerOptions = { capture: true, passive: false } as const;
 
   const turnFromClientX = (clientX: number) => {
     const direction = getPageClickDirection({
@@ -628,6 +698,18 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchstart",
     (event) => {
+      if (event.touches.length === 2 && settingsRef.current.readingMode === "page") {
+        pinchStart = {
+          distance: getTouchDistance(event.touches[0], event.touches[1]),
+          imageScale: settingsRef.current.imageScale
+        };
+        touchStart = null;
+        suppressNextClick = true;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (event.touches.length !== 1 || isInteractiveTarget(event.target)) {
         touchStart = null;
         return;
@@ -636,12 +718,48 @@ function installContentPointerBehavior(
       const touch = event.touches[0];
       touchStart = { x: touch.clientX, y: touch.clientY };
     },
-    true
+    touchListenerOptions
+  );
+
+  doc.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!pinchStart || event.touches.length !== 2 || settingsRef.current.readingMode !== "page") {
+        return;
+      }
+
+      const nextImageScale = getPinchImageScale({
+        startScale: pinchStart.imageScale,
+        startDistance: pinchStart.distance,
+        currentDistance: getTouchDistance(event.touches[0], event.touches[1])
+      });
+      settingsRef.current = { ...settingsRef.current, imageScale: nextImageScale };
+      applyImageScaleToContent(contents, settingsRef.current);
+      onImageScaleChange(nextImageScale);
+      suppressNextClick = true;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    touchListenerOptions
   );
 
   doc.addEventListener(
     "touchend",
     (event) => {
+      if (pinchStart) {
+        if (event.touches.length < 2) {
+          pinchStart = null;
+          touchStart = null;
+          suppressNextClick = true;
+          contents.window.setTimeout(() => {
+            suppressNextClick = false;
+          }, 600);
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       const touch = event.changedTouches[0];
       if (!touchStart || !touch || settingsRef.current.readingMode !== "page") {
         touchStart = null;
@@ -666,7 +784,7 @@ function installContentPointerBehavior(
       event.preventDefault();
       event.stopPropagation();
     },
-    true
+    touchListenerOptions
   );
 
   doc.addEventListener(

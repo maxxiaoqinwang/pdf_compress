@@ -82,7 +82,7 @@ function normalizeImageScale(value: unknown): number {
     return DEFAULT_READER_STATE.imageScale;
   }
 
-  return Math.min(250, Math.max(100, Math.round(value)));
+  return Math.min(400, Math.max(100, Math.round(value)));
 }
 
 function normalizeGripMode(value: unknown): GripMode {

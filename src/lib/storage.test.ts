@@ -69,7 +69,7 @@ describe("reader state storage", () => {
       cfi: null,
       fontScale: 160,
       gripMode: "right",
-      imageScale: 250,
+      imageScale: 400,
       lineHeight: 140,
       readingMode: "scroll",
       theme: "paper"

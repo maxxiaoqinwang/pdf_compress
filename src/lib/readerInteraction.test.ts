@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   getImageScaleStylesheet,
   getPageImageFrameHeight,
+  getPinchImageScale,
   getPageClickDirection,
   getProgressPercent,
   getScrollImagePageViewHeight,
   getScaledFixedLayoutWidth,
+  getToolbarPageControls,
+  getTouchDistance,
   isTapGesture
 } from "./readerInteraction";
 
@@ -115,6 +118,10 @@ describe("getScaledFixedLayoutWidth", () => {
   it("falls back to the image natural width when viewport metadata has no width", () => {
     expect(getScaledFixedLayoutWidth("height=2560", 1200, 150)).toBe(1800);
   });
+
+  it("allows pinch zoom up to 400 percent", () => {
+    expect(getScaledFixedLayoutWidth("width=1920,height=2560", undefined, 400)).toBe(7680);
+  });
 });
 
 describe("getScrollImagePageViewHeight", () => {
@@ -146,5 +153,42 @@ describe("isTapGesture", () => {
 
   it("does not treat a drag as a tap", () => {
     expect(isTapGesture({ startX: 100, startY: 200, endX: 150, endY: 205 })).toBe(false);
+  });
+});
+
+describe("getToolbarPageControls", () => {
+  it("puts next page near the left thumb in left-hand mode", () => {
+    expect(getToolbarPageControls("left")).toEqual([
+      { direction: "next", label: "下章" },
+      { direction: "prev", label: "上章" }
+    ]);
+  });
+
+  it("keeps previous page on the left in right-hand and both-hand modes", () => {
+    expect(getToolbarPageControls("right")).toEqual([
+      { direction: "prev", label: "上章" },
+      { direction: "next", label: "下章" }
+    ]);
+    expect(getToolbarPageControls("both")).toEqual([
+      { direction: "prev", label: "上章" },
+      { direction: "next", label: "下章" }
+    ]);
+  });
+});
+
+describe("getTouchDistance", () => {
+  it("measures the distance between two touches", () => {
+    expect(getTouchDistance({ clientX: 0, clientY: 0 }, { clientX: 3, clientY: 4 })).toBe(5);
+  });
+});
+
+describe("getPinchImageScale", () => {
+  it("scales image size by the pinch distance ratio", () => {
+    expect(getPinchImageScale({ startScale: 150, startDistance: 100, currentDistance: 200 })).toBe(300);
+  });
+
+  it("clamps pinch image scale to a 100-400 range", () => {
+    expect(getPinchImageScale({ startScale: 150, startDistance: 10, currentDistance: 100 })).toBe(400);
+    expect(getPinchImageScale({ startScale: 150, startDistance: 100, currentDistance: 10 })).toBe(100);
   });
 });

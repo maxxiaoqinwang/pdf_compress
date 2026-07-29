@@ -10,6 +10,10 @@ type PageClickInput = {
 };
 
 export type PageClickDirection = "prev" | "next";
+export type ToolbarPageControl = {
+  direction: PageClickDirection;
+  label: string;
+};
 
 type TapGestureInput = {
   startX: number;
@@ -17,6 +21,17 @@ type TapGestureInput = {
   endX: number;
   endY: number;
   maxDistance?: number;
+};
+
+type TouchPointLike = {
+  clientX: number;
+  clientY: number;
+};
+
+type PinchImageScaleInput = {
+  startScale: number;
+  startDistance: number;
+  currentDistance: number;
 };
 
 export function getPageClickDirection({
@@ -55,7 +70,7 @@ export function isTapGesture({
 }
 
 export function getImageScaleStylesheet(imageScale: number): string {
-  const scale = Math.min(250, Math.max(100, Math.round(imageScale)));
+  const scale = normalizeImageScale(imageScale);
   const cursor = scale > 100 ? "grab" : "auto";
 
   return `
@@ -107,11 +122,41 @@ export function getScaledFixedLayoutWidth(
   imageNaturalWidth: number | null | undefined,
   imageScale: number
 ): number | null {
-  const scale = Math.min(250, Math.max(100, Math.round(imageScale)));
+  const scale = normalizeImageScale(imageScale);
   const viewportWidth = readViewportWidth(viewportContent);
   const baseWidth = viewportWidth ?? readPositiveNumber(imageNaturalWidth);
 
   return baseWidth === null ? null : Math.round((baseWidth * scale) / 100);
+}
+
+export function getToolbarPageControls(gripMode: GripMode): ToolbarPageControl[] {
+  if (gripMode === "left") {
+    return [
+      { direction: "next", label: "下章" },
+      { direction: "prev", label: "上章" }
+    ];
+  }
+
+  return [
+    { direction: "prev", label: "上章" },
+    { direction: "next", label: "下章" }
+  ];
+}
+
+export function getTouchDistance(first: TouchPointLike, second: TouchPointLike): number {
+  return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+}
+
+export function getPinchImageScale({
+  startScale,
+  startDistance,
+  currentDistance
+}: PinchImageScaleInput): number {
+  if (!Number.isFinite(startDistance) || startDistance <= 0) {
+    return normalizeImageScale(startScale);
+  }
+
+  return normalizeImageScale((startScale * currentDistance) / startDistance);
 }
 
 export function getScrollImagePageViewHeight(
@@ -205,4 +250,8 @@ function readViewportWidth(viewportContent: string | null | undefined): number |
 
 function readPositiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function normalizeImageScale(value: number): number {
+  return Math.min(400, Math.max(100, Math.round(value)));
 }
