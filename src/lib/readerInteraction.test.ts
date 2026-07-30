@@ -127,19 +127,6 @@ describe("getVerticalPageSwipeDirection", () => {
     ).toBeNull();
   });
 
-  it("accepts a short fast flick but rejects the same distance when dragged slowly", () => {
-    const gesture = {
-      startX: 195,
-      startY: 620,
-      endX: 195,
-      endY: 580,
-      viewportHeight: 844
-    };
-
-    expect(getVerticalPageSwipeDirection({ ...gesture, durationMs: 80 })).toBe("next");
-    expect(getVerticalPageSwipeDirection({ ...gesture, durationMs: 400 })).toBeNull();
-  });
-
   it("honors the page-edge permissions captured at touch start", () => {
     const upwardSwipe = {
       startX: 195,
@@ -230,22 +217,6 @@ describe("getImageScaleStylesheet", () => {
     expect(stylesheet).toContain("width: 100% !important");
     expect(stylesheet).not.toMatch(/(^|\n)\s*html, body/);
     expect(stylesheet).not.toMatch(/(^|\n)\s*img\s*\{/);
-  });
-
-  it("gives paginated 100% pages ownership of touch gestures", () => {
-    const stylesheet = getImageScaleStylesheet(100);
-
-    expect(stylesheet).toContain("html.reader-page-mode.reader-image-document");
-    expect(stylesheet).toContain("touch-action: none !important");
-  });
-
-  it("returns native panning after a paginated image is enlarged", () => {
-    const stylesheet = getImageScaleStylesheet(175);
-    const pageModeRule = stylesheet.slice(
-      stylesheet.indexOf("html.reader-page-mode.reader-image-document")
-    );
-
-    expect(pageModeRule).toContain("touch-action: pan-x pan-y !important");
   });
 });
 

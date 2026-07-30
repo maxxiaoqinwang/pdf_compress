@@ -99,22 +99,6 @@ function createTestFile(name: string, lastModified: number) {
   return { file, arrayBuffer };
 }
 
-type TouchPoint = { clientX: number; clientY: number };
-
-function dispatchTouchEvent(
-  target: Element,
-  type: "touchstart" | "touchmove" | "touchend",
-  touches: TouchPoint[],
-  changedTouches: TouchPoint[] = touches
-) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperties(event, {
-    touches: { configurable: true, value: touches },
-    changedTouches: { configurable: true, value: changedTouches }
-  });
-  target.dispatchEvent(event);
-}
-
 describe("Reader mobile scroll controls", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -248,7 +232,7 @@ describe("Reader mobile scroll controls", () => {
     });
   });
 
-  it("uses full-surface vertical swipes and removes left/right page tap zones", async () => {
+  it("restores reliable left and right page tap zones in paginated mode", async () => {
     const { file } = createTestFile("comic.epub", 3);
     localStorage.setItem(
       `epub-reader-progress-v2:${createBookKey(file)}`,
@@ -262,49 +246,51 @@ describe("Reader mobile scroll controls", () => {
 
     const { container } = render(<Reader file={file} onClose={() => {}} />);
     await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(container.querySelector(".progress-label")?.textContent).toMatch(/^第 /)
-    );
 
-    const contents = createImageContents();
     const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
+      | ((contents: ReturnType<typeof createImageContents>) => void)
       | undefined;
     expect(contentHook).toBeTypeOf("function");
     await act(async () => {
-      contentHook?.(contents);
+      contentHook?.(createImageContents());
       await Promise.resolve();
     });
 
-    expect(container.querySelector(".reader-hotzones")).not.toBeInTheDocument();
-    expect(container.querySelector(".reader-hotzone")).not.toBeInTheDocument();
-
-    const image = contents.document.querySelector("img") as HTMLImageElement;
-
-    // A tap at the old right-edge location now only toggles controls.
-    act(() => {
-      dispatchTouchEvent(image, "touchstart", [{ clientX: 389, clientY: 400 }]);
-      dispatchTouchEvent(image, "touchend", [], [{ clientX: 389, clientY: 400 }]);
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 390,
+        bottom: 844,
+        left: 0,
+        width: 390,
+        height: 844,
+        toJSON: () => ({})
+      })
     });
-    expect(mocks.rendition.next).not.toHaveBeenCalled();
-    expect(mocks.rendition.prev).not.toHaveBeenCalled();
 
-    // An upward swipe works even when it starts at the old right hotzone. The
-    // stale touchend coordinate emulates WebKit; the last touchmove wins.
-    act(() => {
-      dispatchTouchEvent(image, "touchstart", [{ clientX: 380, clientY: 620 }]);
-      dispatchTouchEvent(image, "touchmove", [{ clientX: 378, clientY: 470 }]);
-      dispatchTouchEvent(image, "touchend", [], [{ clientX: 380, clientY: 620 }]);
+    const leftZone = container.querySelector(".reader-hotzone.left") as HTMLButtonElement;
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    expect(leftZone).toBeInTheDocument();
+    expect(rightZone).toBeInTheDocument();
+
+    fireEvent.touchStart(rightZone, {
+      touches: [{ clientX: 389, clientY: 400 }]
+    });
+    fireEvent.touchEnd(rightZone, {
+      changedTouches: [{ clientX: 389, clientY: 400 }]
     });
     await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
 
-    await new Promise((resolve) => window.setTimeout(resolve, 220));
-
-    // A downward swipe works from the old left hotzone and goes back.
-    act(() => {
-      dispatchTouchEvent(image, "touchstart", [{ clientX: 10, clientY: 250 }]);
-      dispatchTouchEvent(image, "touchmove", [{ clientX: 12, clientY: 410 }]);
-      dispatchTouchEvent(image, "touchend", [], [{ clientX: 12, clientY: 410 }]);
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    fireEvent.touchStart(leftZone, {
+      touches: [{ clientX: 1, clientY: 400 }]
+    });
+    fireEvent.touchEnd(leftZone, {
+      changedTouches: [{ clientX: 1, clientY: 400 }]
     });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
