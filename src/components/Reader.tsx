@@ -402,8 +402,6 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     let cancelled = false;
     let detachLazyResourceCleanup = () => {};
-    let activeScaleScrollFrame: number | null = null;
-    let activeScaleScrollContainer: HTMLElement | null = null;
     const lazyResources = lazyResourcesRef.current;
     const lowMemoryScroll =
       readingMode === "scroll" &&
@@ -416,28 +414,6 @@ export function Reader({ file, onClose }: ReaderProps) {
     if (lazyResources) {
       detachLazyResourceCleanup = attachLazyResourceCleanup(rendition, lazyResources);
     }
-
-    const handleActiveScaleScroll = () => {
-      if (activeScaleScrollFrame !== null) {
-        return;
-      }
-      activeScaleScrollFrame = window.requestAnimationFrame(() => {
-        activeScaleScrollFrame = null;
-        if (renditionRef.current === rendition) {
-          applyImageScaleToRenderedContents(rendition, latestSettingsRef.current);
-        }
-      });
-    };
-    const attachActiveScaleScroll = () => {
-      const container = getRenditionManagerContainer(rendition);
-      if (!container || container === activeScaleScrollContainer) {
-        return;
-      }
-      activeScaleScrollContainer?.removeEventListener("scroll", handleActiveScaleScroll);
-      activeScaleScrollContainer = container;
-      container.addEventListener("scroll", handleActiveScaleScroll, { passive: true });
-    };
-    attachActiveScaleScroll();
 
     renditionRef.current = rendition;
     setStatus("loading");
@@ -492,7 +468,6 @@ export function Reader({ file, onClose }: ReaderProps) {
           return;
         }
 
-        attachActiveScaleScroll();
         applyImageScaleToRenderedContents(rendition, latestSettingsRef.current);
 
         if (readingMode === "scroll" && !lowMemoryScroll) {
@@ -525,10 +500,6 @@ export function Reader({ file, onClose }: ReaderProps) {
         rendition.destroy();
         detachRenditionFromBook(book, rendition);
       }
-      if (activeScaleScrollFrame !== null) {
-        window.cancelAnimationFrame(activeScaleScrollFrame);
-      }
-      activeScaleScrollContainer?.removeEventListener("scroll", handleActiveScaleScroll);
       detachLazyResourceCleanup();
       lazyResources?.resetRenderedSections();
       host.replaceChildren();
@@ -1303,7 +1274,10 @@ function applyImageScaleToContent(
     doc.__readerAppliedImageScale !== settings.imageScale ||
     doc.__readerAppliedReadingMode !== settings.readingMode;
   const candidateAnchor =
-    anchorOverride ?? (hadAppliedSetting && syncHeight ? captureImageScaleAnchor(contents) : null);
+    anchorOverride ??
+    (hadAppliedSetting && settingChanged && syncHeight
+      ? captureImageScaleAnchor(contents)
+      : null);
   const markedPage = markImagePage(
     contents,
     settings.imageScale,
@@ -1423,7 +1397,9 @@ function syncSingleImageViewHeight(
   let firstAnchor = anchorOverride;
 
   const applyHeight = () => {
-    const anchor = firstAnchor ?? captureImageScaleAnchor(contents);
+    // Natural image decode/ResizeObserver updates must never reposition the
+    // continuous manager. Only an explicit scale change supplies an anchor.
+    const anchor = firstAnchor;
     firstAnchor = null;
 
     // epub.js can recalculate its fit-to-frame body transform after a resize.
@@ -1655,6 +1631,7 @@ function installContentPointerBehavior(
   let touchStart: { x: number; y: number; startedOnImage: boolean } | null = null;
   let pinchStart: { distance: number; imageScale: number } | null = null;
   let pinchAnchor: ImageScaleAnchor | null = null;
+  let pinchInputSource: "touch" | "gesture" | null = null;
   let pinchPreviewScale: number | null = null;
   let pinchAnimationFrame: number | null = null;
   let safariGestureStartScale: number | null = null;
@@ -1711,6 +1688,7 @@ function installContentPointerBehavior(
     pinchPreviewScale = null;
     pinchStart = null;
     pinchAnchor = null;
+    pinchInputSource = null;
     safariGestureStartScale = null;
     safariGestureAnchor = null;
     touchStart = null;
@@ -1737,6 +1715,7 @@ function installContentPointerBehavior(
     );
     pinchStart = null;
     pinchAnchor = null;
+    pinchInputSource = null;
     pinchPreviewScale = null;
     safariGestureStartScale = null;
     safariGestureAnchor = null;
@@ -1797,6 +1776,7 @@ function installContentPointerBehavior(
           imageScale: settingsRef.current.imageScale
         };
         pinchAnchor = captureImageScaleAnchor(contents);
+        pinchInputSource = "touch";
         pinchPreviewScale = settingsRef.current.imageScale;
         safariGestureStartScale = null;
         safariGestureAnchor = null;
@@ -1825,7 +1805,7 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchmove",
     (event) => {
-      if (pinchStart && event.touches.length === 2) {
+      if (pinchInputSource === "touch" && pinchStart && event.touches.length === 2) {
         const nextImageScale = getPinchImageScale({
           startScale: pinchStart.imageScale,
           startDistance: pinchStart.distance,
@@ -1859,7 +1839,16 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchend",
     (event) => {
-      if (pinchStart) {
+      // Safari can begin with Touch Events and then switch to its native
+      // gesture events. Once gesturestart takes over, touchend must not commit
+      // the unchanged 100% touch preview before gesturechange is processed.
+      if (pinchInputSource === "gesture") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (pinchInputSource === "touch" && pinchStart) {
         if (event.touches.length < 2) {
           commitPinchScale(
             pinchPreviewScale ?? settingsRef.current.imageScale,
@@ -1963,32 +1952,43 @@ function installContentPointerBehavior(
     "touchcancel",
     () => {
       touchStart = null;
-      if (pinchStart) {
+      if (pinchInputSource === "touch" && pinchStart) {
         cancelPinchPreview();
       }
     },
     touchListenerOptions
   );
 
-  // iOS Safari and some older WKWebView builds expose their native
-  // gesturestart/change/end events even when touch events inside an EPUB iframe
-  // are incomplete. They are a fallback, not a second competing zoom path.
+  // iOS Safari and some WKWebView builds start with a two-touch touchstart,
+  // then deliver the actual scale changes only through gesturechange. Let the
+  // gesture stream take ownership instead of ignoring it because pinchStart is
+  // already populated; the old behavior made 100% pages appear unzoomable.
   type SafariGestureEvent = Event & { scale?: number };
   const handleGestureStart = (rawEvent: Event) => {
     const event = rawEvent as SafariGestureEvent;
-    if (pinchStart || !isImageDocument()) {
+    if (!isImageDocument()) {
       return;
     }
-    safariGestureStartScale = settingsRef.current.imageScale;
-    safariGestureAnchor = captureImageScaleAnchor(contents);
-    pinchPreviewScale = settingsRef.current.imageScale;
+
+    if (pinchAnimationFrame !== null) {
+      contents.window.cancelAnimationFrame(pinchAnimationFrame);
+      pinchAnimationFrame = null;
+    }
+
+    safariGestureStartScale = pinchStart?.imageScale ?? settingsRef.current.imageScale;
+    safariGestureAnchor = pinchAnchor ?? captureImageScaleAnchor(contents);
+    pinchInputSource = "gesture";
+    pinchStart = null;
+    pinchAnchor = null;
+    pinchPreviewScale = safariGestureStartScale;
+    touchStart = null;
     suppressNextClick = true;
     event.preventDefault();
     event.stopPropagation();
   };
   const handleGestureChange = (rawEvent: Event) => {
     const event = rawEvent as SafariGestureEvent;
-    if (pinchStart || safariGestureStartScale === null) {
+    if (pinchInputSource !== "gesture" || safariGestureStartScale === null) {
       return;
     }
     const scale = typeof event.scale === "number" && Number.isFinite(event.scale) ? event.scale : 1;
@@ -2004,13 +2004,18 @@ function installContentPointerBehavior(
   };
   const handleGestureEnd = (rawEvent: Event) => {
     const event = rawEvent as SafariGestureEvent;
-    if (pinchStart || safariGestureStartScale === null) {
+    if (pinchInputSource !== "gesture" || safariGestureStartScale === null) {
       return;
     }
-    commitPinchScale(
-      pinchPreviewScale ?? settingsRef.current.imageScale,
-      safariGestureAnchor
-    );
+    const finalScale =
+      typeof event.scale === "number" && Number.isFinite(event.scale)
+        ? getPinchImageScale({
+            startScale: safariGestureStartScale,
+            startDistance: 1,
+            currentDistance: event.scale
+          })
+        : pinchPreviewScale ?? settingsRef.current.imageScale;
+    commitPinchScale(finalScale, safariGestureAnchor);
     event.preventDefault();
     event.stopPropagation();
   };

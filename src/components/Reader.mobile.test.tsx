@@ -121,6 +121,16 @@ function dispatchTouchEvent(
   target.dispatchEvent(event);
 }
 
+function dispatchGestureEvent(
+  target: Element,
+  type: "gesturestart" | "gesturechange" | "gestureend",
+  scale: number
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "scale", { configurable: true, value: scale });
+  target.dispatchEvent(event);
+}
+
 describe("Reader mobile scroll controls", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -179,6 +189,35 @@ describe("Reader mobile scroll controls", () => {
       "aria-hidden",
       "false"
     );
+  });
+
+  it("does not re-run image sizing on every natural continuous scroll", async () => {
+    const { file } = createTestFile("scroll-comic.epub", 8);
+    mocks.book.package.metadata.layout = "pre-paginated";
+    mocks.book.displayOptions.fixedLayout = "true";
+    const contents = createImageContents();
+    mocks.rendition.getContents.mockReturnValue([contents]);
+
+    render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((value: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    act(() => contentHook?.(contents));
+
+    const readerDocument = contents.document as Document & {
+      __readerImageHeightScale?: number;
+    };
+    readerDocument.__readerImageHeightScale = undefined;
+    const stylesheetCalls = contents.addStylesheetCss.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.scroll(mocks.rendition.manager.container as HTMLElement);
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(contents.addStylesheetCss).toHaveBeenCalledTimes(stylesheetCalls);
   });
 
   it("opens a large scroll book without making an extra ArrayBuffer copy", async () => {
@@ -330,6 +369,53 @@ describe("Reader mobile scroll controls", () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText("EPUB 阅读器")).toBeInTheDocument();
+      expect(contents.document.body.style.transform).toBe("scale(0.35) scale(2)");
+    });
+  });
+
+  it("lets Safari gesture events take over a 100% touch pinch", async () => {
+    const { file } = createTestFile("safari-fixed-layout-comic.epub", 9);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+    mocks.book.package.metadata.layout = "pre-paginated";
+    mocks.book.displayOptions.fixedLayout = "true";
+    const contents = createImageContents();
+    mocks.rendition.getContents.mockReturnValue([contents]);
+
+    render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((value: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    act(() => contentHook?.(contents));
+
+    const image = contents.document.querySelector("img") as HTMLImageElement;
+    await act(async () => {
+      dispatchTouchEvent(
+        image,
+        "touchstart",
+        [
+          { clientX: 100, clientY: 300 },
+          { clientX: 200, clientY: 300 }
+        ]
+      );
+      dispatchGestureEvent(image, "gesturestart", 1);
+      dispatchGestureEvent(image, "gesturechange", 2);
+      // WebKit can finish the Touch Events stream before gestureend. This must
+      // not commit the unchanged 100% touch preview.
+      dispatchTouchEvent(image, "touchend", [], []);
+      dispatchGestureEvent(image, "gestureend", 2);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
       expect(contents.document.body.style.transform).toBe("scale(0.35) scale(2)");
     });
   });
