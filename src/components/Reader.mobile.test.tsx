@@ -99,6 +99,26 @@ function createTestFile(name: string, lastModified: number) {
   return { file, arrayBuffer };
 }
 
+type TouchPoint = { clientX: number; clientY: number };
+
+function dispatchTouchEvent(
+  target: Element,
+  type: "touchstart" | "touchmove" | "touchend",
+  touches: TouchPoint[],
+  changedTouches: TouchPoint[] = touches
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    touches: { configurable: true, value: touches },
+    changedTouches: { configurable: true, value: changedTouches }
+  });
+  target.dispatchEvent(event);
+}
+
+function dispatchClickEvent(target: Element, clientX: number) {
+  target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX }));
+}
+
 describe("Reader mobile scroll controls", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -232,7 +252,7 @@ describe("Reader mobile scroll controls", () => {
     });
   });
 
-  it("restores reliable left and right page tap zones in paginated mode", async () => {
+  it("removes left and right page tap zones in paginated mode", async () => {
     const { file } = createTestFile("comic.epub", 3);
     localStorage.setItem(
       `epub-reader-progress-v2:${createBookKey(file)}`,
@@ -246,52 +266,33 @@ describe("Reader mobile scroll controls", () => {
 
     const { container } = render(<Reader file={file} onClose={() => {}} />);
     await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(container.querySelector(".progress-label")?.textContent).toMatch(/^第 /)
+    );
 
+    const contents = createImageContents();
     const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | ((value: ReturnType<typeof createImageContents>) => void)
       | undefined;
     expect(contentHook).toBeTypeOf("function");
     await act(async () => {
-      contentHook?.(createImageContents());
+      contentHook?.(contents);
       await Promise.resolve();
     });
 
-    const stage = container.querySelector(".reader-stage") as HTMLElement;
-    Object.defineProperty(stage, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({
-        x: 0,
-        y: 0,
-        top: 0,
-        right: 390,
-        bottom: 844,
-        left: 0,
-        width: 390,
-        height: 844,
-        toJSON: () => ({})
-      })
+    expect(container.querySelector(".reader-hotzones")).not.toBeInTheDocument();
+    expect(container.querySelector(".reader-hotzone")).not.toBeInTheDocument();
+
+    const image = contents.document.querySelector("img") as HTMLImageElement;
+    act(() => {
+      dispatchTouchEvent(image, "touchstart", [{ clientX: 389, clientY: 400 }]);
+      dispatchTouchEvent(image, "touchend", [], [{ clientX: 389, clientY: 400 }]);
+      dispatchTouchEvent(image, "touchstart", [{ clientX: 1, clientY: 400 }]);
+      dispatchTouchEvent(image, "touchend", [], [{ clientX: 1, clientY: 400 }]);
+      dispatchClickEvent(image, 389);
     });
 
-    const leftZone = container.querySelector(".reader-hotzone.left") as HTMLButtonElement;
-    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
-    expect(leftZone).toBeInTheDocument();
-    expect(rightZone).toBeInTheDocument();
-
-    fireEvent.touchStart(rightZone, {
-      touches: [{ clientX: 389, clientY: 400 }]
-    });
-    fireEvent.touchEnd(rightZone, {
-      changedTouches: [{ clientX: 389, clientY: 400 }]
-    });
-    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
-
-    await new Promise((resolve) => window.setTimeout(resolve, 200));
-    fireEvent.touchStart(leftZone, {
-      touches: [{ clientX: 1, clientY: 400 }]
-    });
-    fireEvent.touchEnd(leftZone, {
-      changedTouches: [{ clientX: 1, clientY: 400 }]
-    });
-    await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
+    expect(mocks.rendition.next).not.toHaveBeenCalled();
+    expect(mocks.rendition.prev).not.toHaveBeenCalled();
   });
 });
