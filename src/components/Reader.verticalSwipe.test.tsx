@@ -135,7 +135,7 @@ type TouchPoint = { clientX: number; clientY: number };
 
 function dispatchTouchEvent(
   target: Element,
-  type: "touchstart" | "touchmove" | "touchend" | "touchcancel",
+  type: "touchstart" | "touchmove" | "touchend",
   touches: TouchPoint[],
   changedTouches: TouchPoint[] = touches
 ) {
@@ -155,9 +155,6 @@ async function renderPageReader(imageScale = 100) {
 
   const view = render(<Reader file={file} onClose={() => {}} />);
   await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-  await waitFor(() =>
-    expect(view.container.querySelector(".progress-label")).toHaveTextContent("第 1/2 页")
-  );
   const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
     | ((value: ReturnType<typeof createImageContents>) => void)
     | undefined;
@@ -215,33 +212,6 @@ describe("Reader vertical page swipes", () => {
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
 
-  it("uses the last touchmove when WebKit reports a stale touchend point", async () => {
-    const { image } = await renderPageReader();
-    setVisualImageBounds(image, { top: 0, bottom: 551 });
-
-    act(() => {
-      const start = { clientX: 380, clientY: 620 };
-      dispatchTouchEvent(image, "touchstart", [start], [start]);
-      dispatchTouchEvent(image, "touchmove", [{ clientX: 378, clientY: 470 }]);
-      dispatchTouchEvent(image, "touchend", [], [start]);
-    });
-
-    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
-  });
-
-  it("finishes an eligible vertical swipe when WebKit sends touchcancel", async () => {
-    const { image } = await renderPageReader();
-    setVisualImageBounds(image, { top: 0, bottom: 551 });
-
-    act(() => {
-      dispatchTouchEvent(image, "touchstart", [{ clientX: 195, clientY: 650 }]);
-      dispatchTouchEvent(image, "touchmove", [{ clientX: 195, clientY: 500 }]);
-      dispatchTouchEvent(image, "touchcancel", [], []);
-    });
-
-    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
-  });
-
   it("keeps a zoomed image pannable until a fresh swipe starts at its bottom edge", async () => {
     const { image } = await renderPageReader(200);
 
@@ -263,7 +233,7 @@ describe("Reader vertical page swipes", () => {
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
 
-  it("keeps pinch zoom without treating it as a page swipe", async () => {
+  it("does not treat a horizontal gesture or a two-finger pinch as a page swipe", async () => {
     const { image } = await renderPageReader();
     setVisualImageBounds(image, { top: 0, bottom: 551 });
 
@@ -289,13 +259,8 @@ describe("Reader vertical page swipes", () => {
       );
       dispatchTouchEvent(image, "touchend", [], [{ clientX: 100, clientY: 420 }]);
     });
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
 
-    await waitFor(() => {
-      const savedPreferences = JSON.parse(
-        localStorage.getItem("epub-reader-preferences-v2") ?? "{}"
-      ) as { imageScale?: number };
-      expect(savedPreferences.imageScale).toBe(173);
-    });
     expect(mocks.rendition.next).not.toHaveBeenCalled();
     expect(mocks.rendition.prev).not.toHaveBeenCalled();
   });

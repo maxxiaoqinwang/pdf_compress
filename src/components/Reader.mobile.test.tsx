@@ -99,28 +99,6 @@ function createTestFile(name: string, lastModified: number) {
   return { file, arrayBuffer };
 }
 
-type PointerPoint = {
-  pointerId: number;
-  pointerType?: string;
-  clientX: number;
-  clientY: number;
-};
-
-function dispatchPointerEvent(
-  target: Element,
-  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
-  point: PointerPoint
-) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperties(event, {
-    pointerId: { configurable: true, value: point.pointerId },
-    pointerType: { configurable: true, value: point.pointerType ?? "touch" },
-    clientX: { configurable: true, value: point.clientX },
-    clientY: { configurable: true, value: point.clientY }
-  });
-  target.dispatchEvent(event);
-}
-
 describe("Reader mobile scroll controls", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -254,7 +232,7 @@ describe("Reader mobile scroll controls", () => {
     });
   });
 
-  it("uses a full-surface vertical gesture layer without restoring side taps", async () => {
+  it("restores reliable left and right page tap zones in paginated mode", async () => {
     const { file } = createTestFile("comic.epub", 3);
     localStorage.setItem(
       `epub-reader-progress-v2:${createBookKey(file)}`,
@@ -268,85 +246,51 @@ describe("Reader mobile scroll controls", () => {
 
     const { container } = render(<Reader file={file} onClose={() => {}} />);
     await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(container.querySelector(".progress-label")?.textContent).toMatch(/^第 /)
-    );
 
-    const contents = createImageContents();
     const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
+      | ((contents: ReturnType<typeof createImageContents>) => void)
       | undefined;
     expect(contentHook).toBeTypeOf("function");
     await act(async () => {
-      contentHook?.(contents);
+      contentHook?.(createImageContents());
       await Promise.resolve();
     });
 
-    const gestureLayer = await waitFor(() => {
-      const layer = container.querySelector(".reader-page-gesture-layer");
-      expect(layer).toBeInTheDocument();
-      return layer as HTMLElement;
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 390,
+        bottom: 844,
+        left: 0,
+        width: 390,
+        height: 844,
+        toJSON: () => ({})
+      })
     });
 
-    act(() => {
-      dispatchPointerEvent(gestureLayer, "pointerdown", {
-        pointerId: 1,
-        pointerType: "touch",
-        clientX: 389,
-        clientY: 400
-      });
-      dispatchPointerEvent(gestureLayer, "pointerup", {
-        pointerId: 1,
-        pointerType: "touch",
-        clientX: 389,
-        clientY: 400
-      });
-    });
-    expect(mocks.rendition.next).not.toHaveBeenCalled();
-    expect(mocks.rendition.prev).not.toHaveBeenCalled();
+    const leftZone = container.querySelector(".reader-hotzone.left") as HTMLButtonElement;
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    expect(leftZone).toBeInTheDocument();
+    expect(rightZone).toBeInTheDocument();
 
-    act(() => {
-      dispatchPointerEvent(gestureLayer, "pointerdown", {
-        pointerId: 2,
-        pointerType: "touch",
-        clientX: 195,
-        clientY: 760
-      });
-      dispatchPointerEvent(gestureLayer, "pointermove", {
-        pointerId: 2,
-        pointerType: "touch",
-        clientX: 195,
-        clientY: 620
-      });
-      dispatchPointerEvent(gestureLayer, "pointerup", {
-        pointerId: 2,
-        pointerType: "touch",
-        clientX: 195,
-        clientY: 620
-      });
+    fireEvent.touchStart(rightZone, {
+      touches: [{ clientX: 389, clientY: 400 }]
+    });
+    fireEvent.touchEnd(rightZone, {
+      changedTouches: [{ clientX: 389, clientY: 400 }]
     });
     await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
 
-    await new Promise((resolve) => window.setTimeout(resolve, 220));
-    act(() => {
-      dispatchPointerEvent(gestureLayer, "pointerdown", {
-        pointerId: 3,
-        pointerType: "touch",
-        clientX: 195,
-        clientY: 180
-      });
-      dispatchPointerEvent(gestureLayer, "pointermove", {
-        pointerId: 3,
-        pointerType: "touch",
-        clientX: 195,
-        clientY: 340
-      });
-      dispatchPointerEvent(gestureLayer, "pointerup", {
-        pointerId: 3,
-        pointerType: "touch",
-        clientX: 195,
-        clientY: 340
-      });
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+    fireEvent.touchStart(leftZone, {
+      touches: [{ clientX: 1, clientY: 400 }]
+    });
+    fireEvent.touchEnd(leftZone, {
+      changedTouches: [{ clientX: 1, clientY: 400 }]
     });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });

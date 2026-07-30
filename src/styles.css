@@ -225,17 +225,34 @@ h1 {
   overscroll-behavior: contain;
 }
 
-.reader-page-gesture-layer {
+.reader-hotzones {
   position: absolute;
   inset: 0;
   z-index: 4;
+  pointer-events: none;
+}
+
+.reader-hotzone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18%;
+  min-width: 52px;
+  padding: 0;
   border: 0;
+  border-radius: 0;
+  opacity: 0;
   background: transparent;
   pointer-events: auto;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.reader-hotzone.left {
+  left: 0;
+}
+
+.reader-hotzone.right {
+  right: 0;
 }
 
 .reader-chrome-top,

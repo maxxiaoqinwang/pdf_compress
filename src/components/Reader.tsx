@@ -65,22 +65,6 @@ type ReaderDocument = Document & {
   __readerImageHeightCleanup?: () => void;
 };
 
-type PageGesturePoint = {
-  clientX: number;
-  clientY: number;
-};
-
-type PageGestureState = {
-  points: Map<number, PageGesturePoint>;
-  swipeStart: (PageGesturePoint & {
-    lastX: number;
-    lastY: number;
-    viewportHeight: number;
-  }) | null;
-  pinchStart: { distance: number; imageScale: number } | null;
-  previewScale: number | null;
-};
-
 const COMPACT_READER_QUERY =
   "(max-width: 760px), (pointer: coarse) and (max-height: 500px)";
 const LAZY_RESOURCE_THRESHOLD = 32 * 1024 * 1024;
@@ -94,12 +78,13 @@ export function Reader({ file, onClose }: ReaderProps) {
   const lazyResourcesRef = useRef<LazyEpubResourceController | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const pageTurnLockedRef = useRef(false);
-  const pageGestureRef = useRef<PageGestureState>({
-    points: new Map(),
-    swipeStart: null,
-    pinchStart: null,
-    previewScale: null
-  });
+  const lastHotzoneTouchRef = useRef(0);
+  const hotzoneTouchStartRef = useRef<{
+    side: "left" | "right";
+    x: number;
+    y: number;
+    viewportHeight: number;
+  } | null>(null);
   const statusRef = useRef<LoadStatus>("loading");
   const progressSaveTimerRef = useRef<number | null>(null);
   const activeSheetRef = useRef<ReaderSheet>(null);
@@ -695,176 +680,98 @@ export function Reader({ file, onClose }: ReaderProps) {
     setReadingMode(mode);
   }
 
-  function resetPageGesture(restorePreview = false) {
-    const gesture = pageGestureRef.current;
-    gesture.points.clear();
-    gesture.swipeStart = null;
-    gesture.pinchStart = null;
-    gesture.previewScale = null;
-
-    if (!restorePreview) {
-      return;
-    }
-
-    const rendition = renditionRef.current;
-    if (rendition) {
-      applyImageScaleToRenderedContents(rendition, latestSettingsRef.current);
-    }
-  }
-
-  function handlePageGesturePointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.pointerType === "mouse") {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      // Pointer capture is optional in older embedded browsers.
-    }
-
-    const gesture = pageGestureRef.current;
-    const point = { clientX: event.clientX, clientY: event.clientY };
-    gesture.points.set(event.pointerId, point);
-
-    if (gesture.points.size === 1) {
-      gesture.swipeStart = {
-        ...point,
-        lastX: point.clientX,
-        lastY: point.clientY,
-        viewportHeight: stageRef.current?.clientHeight || window.innerHeight
-      };
-      gesture.pinchStart = null;
-      gesture.previewScale = null;
-      return;
-    }
-
-    if (gesture.points.size === 2) {
-      const [first, second] = Array.from(gesture.points.values());
-      gesture.pinchStart = {
-        distance: getTouchDistance(first, second),
-        imageScale
-      };
-      gesture.previewScale = imageScale;
-      gesture.swipeStart = null;
-      return;
-    }
-
-    gesture.swipeStart = null;
-  }
-
-  function handlePageGesturePointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    const gesture = pageGestureRef.current;
-    if (!gesture.points.has(event.pointerId)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    gesture.points.set(event.pointerId, {
-      clientX: event.clientX,
-      clientY: event.clientY
-    });
-
-    if (gesture.pinchStart && gesture.points.size >= 2) {
-      const [first, second] = Array.from(gesture.points.values());
-      const nextImageScale = getPinchImageScale({
-        startScale: gesture.pinchStart.imageScale,
-        startDistance: gesture.pinchStart.distance,
-        currentDistance: getTouchDistance(first, second)
-      });
-      gesture.previewScale = nextImageScale;
-      const rendition = renditionRef.current;
-      if (rendition) {
-        getRenderedContents(rendition).forEach((contents) =>
-          previewImageScale(contents, nextImageScale)
-        );
-      }
-      return;
-    }
-
-    if (gesture.swipeStart && gesture.points.size === 1) {
-      gesture.swipeStart.lastX = event.clientX;
-      gesture.swipeStart.lastY = event.clientY;
-    }
-  }
-
-  function handlePageGesturePointerUp(event: React.PointerEvent<HTMLDivElement>) {
-    const gesture = pageGestureRef.current;
-    if (!gesture.points.has(event.pointerId)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (gesture.pinchStart) {
-      const committedScale = gesture.previewScale ?? gesture.pinchStart.imageScale;
-      resetPageGesture();
-      setImageScale(committedScale);
-      return;
-    }
-
-    const start = gesture.swipeStart;
-    const lastPoint = start ? { x: start.lastX, y: start.lastY } : null;
-    const changedPoint = { x: event.clientX, y: event.clientY };
-    resetPageGesture();
-    if (!start || !lastPoint) {
-      return;
-    }
-
-    const changedDistance = Math.hypot(
-      changedPoint.x - start.clientX,
-      changedPoint.y - start.clientY
-    );
-    const lastDistance = Math.hypot(
-      lastPoint.x - start.clientX,
-      lastPoint.y - start.clientY
-    );
-    const endPoint = changedDistance >= lastDistance ? changedPoint : lastPoint;
-    const swipeDirection = getVerticalPageSwipeDirection({
-      readingMode: "page",
-      startX: start.clientX,
-      startY: start.clientY,
-      endX: endPoint.x,
-      endY: endPoint.y,
-      viewportHeight: start.viewportHeight
-    });
-
-    if (swipeDirection) {
-      void turnPage(swipeDirection);
-      return;
-    }
-
-    if (
-      isTapGesture({
-        startX: start.clientX,
-        startY: start.clientY,
-        endX: endPoint.x,
-        endY: endPoint.y
-      })
-    ) {
-      uiActionsRef.current.toggleControls();
-    }
-  }
-
-  function handlePageGesturePointerCancel(event: React.PointerEvent<HTMLDivElement>) {
-    const gesture = pageGestureRef.current;
-    if (!gesture.points.has(event.pointerId)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    resetPageGesture(gesture.pinchStart !== null);
-  }
-
   function handleStageClick(event: React.MouseEvent<HTMLDivElement>) {
     if (event.target === event.currentTarget || event.target === mountRef.current) {
       uiActionsRef.current.toggleControls();
     }
+  }
+
+  function turnFromHotzone(side: "left" | "right") {
+    const stage = stageRef.current;
+    if (!stage || imageScale > 100) {
+      return;
+    }
+
+    const bounds = stage.getBoundingClientRect();
+    const direction = getPageClickDirection({
+      readingMode: "page",
+      gripMode,
+      clientX: side === "left" ? bounds.left + 1 : bounds.right - 1,
+      boundsLeft: bounds.left,
+      boundsWidth: bounds.width
+    });
+    if (direction) {
+      void turnPage(direction);
+    }
+  }
+
+  function handleHotzoneTouchStart(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    if (event.touches.length !== 1) {
+      hotzoneTouchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    hotzoneTouchStartRef.current = {
+      side,
+      x: touch.clientX,
+      y: touch.clientY,
+      viewportHeight: stageRef.current?.clientHeight ?? window.innerHeight
+    };
+  }
+
+  function handleHotzoneTouchEnd(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    const start = hotzoneTouchStartRef.current;
+    const touch = event.changedTouches[0];
+    hotzoneTouchStartRef.current = null;
+    if (!start || !touch || start.side !== side) {
+      return;
+    }
+
+    const wasTap = isTapGesture({
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY
+    });
+    const swipeDirection = getVerticalPageSwipeDirection({
+      readingMode: "page",
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY,
+      viewportHeight: start.viewportHeight
+    });
+    if (!wasTap && !swipeDirection) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    lastHotzoneTouchRef.current = Date.now();
+    if (swipeDirection) {
+      void turnPage(swipeDirection);
+    } else {
+      turnFromHotzone(side);
+    }
+  }
+
+  function handleHotzoneClick(
+    side: "left" | "right",
+    event: React.MouseEvent<HTMLButtonElement>
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - lastHotzoneTouchRef.current < 500) {
+      return;
+    }
+    turnFromHotzone(side);
   }
 
   const chromeIsVisible =
@@ -915,14 +822,26 @@ export function Reader({ file, onClose }: ReaderProps) {
           readingMode === "page" &&
           imageDocumentActive &&
           imageScale <= 100 ? (
-            <div
-              className="reader-page-gesture-layer"
-              aria-hidden="true"
-              onPointerDown={handlePageGesturePointerDown}
-              onPointerMove={handlePageGesturePointerMove}
-              onPointerUp={handlePageGesturePointerUp}
-              onPointerCancel={handlePageGesturePointerCancel}
-            />
+            <div className="reader-hotzones" aria-label="分页点击区域">
+              <button
+                className="reader-hotzone left"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "下一页" : "上一页"}
+                onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
+                onClick={(event) => handleHotzoneClick("left", event)}
+              />
+              <button
+                className="reader-hotzone right"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "上一页" : "下一页"}
+                onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
+                onClick={(event) => handleHotzoneClick("right", event)}
+              />
+            </div>
           ) : null}
         </div>
       </div>
@@ -1554,8 +1473,6 @@ function installContentPointerBehavior(
   let touchStart: {
     x: number;
     y: number;
-    lastX: number;
-    lastY: number;
     viewportHeight: number;
     allowPrev: boolean;
     allowNext: boolean;
@@ -1567,12 +1484,8 @@ function installContentPointerBehavior(
   const touchListenerOptions = { capture: true, passive: false } as const;
 
   const turnFromClientX = (clientX: number) => {
-    if (settingsRef.current.readingMode !== "scroll") {
-      return false;
-    }
-
     const direction = getPageClickDirection({
-      readingMode: "scroll",
+      readingMode: settingsRef.current.readingMode,
       gripMode: settingsRef.current.gripMode,
       clientX,
       boundsLeft: 0,
@@ -1600,77 +1513,6 @@ function installContentPointerBehavior(
 
       previewImageScale(contents, pinchPreviewScale);
     });
-  };
-
-  const finishTouchGesture = (
-    changedTouch: { clientX: number; clientY: number } | null,
-    allowTap = true
-  ) => {
-    if (!touchStart) {
-      return false;
-    }
-
-    const gestureStart = touchStart;
-    touchStart = null;
-    const changedPoint = changedTouch
-      ? { x: changedTouch.clientX, y: changedTouch.clientY }
-      : null;
-    const lastPoint = { x: gestureStart.lastX, y: gestureStart.lastY };
-    const changedDistance = changedPoint
-      ? Math.hypot(changedPoint.x - gestureStart.x, changedPoint.y - gestureStart.y)
-      : -1;
-    const lastDistance = Math.hypot(
-      lastPoint.x - gestureStart.x,
-      lastPoint.y - gestureStart.y
-    );
-    const endPoint = changedDistance >= lastDistance && changedPoint ? changedPoint : lastPoint;
-
-    if (hasTextSelection(contents.window)) {
-      return false;
-    }
-
-    if (settingsRef.current.readingMode === "page") {
-      const swipeDirection = getVerticalPageSwipeDirection({
-        startX: gestureStart.x,
-        startY: gestureStart.y,
-        endX: endPoint.x,
-        endY: endPoint.y,
-        viewportHeight: gestureStart.viewportHeight,
-        allowPrev: gestureStart.allowPrev,
-        allowNext: gestureStart.allowNext
-      });
-      if (swipeDirection) {
-        onPageTurn(swipeDirection);
-        suppressNextClick = true;
-        suppressClickTemporarily(contents, () => {
-          suppressNextClick = false;
-        });
-        return true;
-      }
-    }
-
-    if (
-      !allowTap ||
-      !isTapGesture({
-        startX: gestureStart.x,
-        startY: gestureStart.y,
-        endX: endPoint.x,
-        endY: endPoint.y
-      })
-    ) {
-      return false;
-    }
-
-    // Paginated reading is vertical-swipe only. Scrolling mode keeps its
-    // existing edge-tap navigation; other taps only show or hide controls.
-    if (!turnFromClientX(endPoint.x)) {
-      onToggleControls();
-    }
-    suppressNextClick = true;
-    suppressClickTemporarily(contents, () => {
-      suppressNextClick = false;
-    });
-    return true;
   };
 
   doc.addEventListener(
@@ -1742,15 +1584,11 @@ function installContentPointerBehavior(
       const touch = event.touches[0];
       const swipeAvailability =
         settingsRef.current.readingMode === "page"
-          ? settingsRef.current.imageScale <= 100
-            ? { prev: true, next: true, scrollable: false }
-            : getContentPageSwipeAvailability(contents)
+          ? getContentPageSwipeAvailability(contents)
           : { prev: false, next: false, scrollable: false };
       touchStart = {
         x: touch.clientX,
         y: touch.clientY,
-        lastX: touch.clientX,
-        lastY: touch.clientY,
         viewportHeight: getContentViewportHeight(contents),
         allowPrev: swipeAvailability.prev,
         allowNext: swipeAvailability.next
@@ -1780,8 +1618,6 @@ function installContentPointerBehavior(
       }
 
       const touch = event.touches[0];
-      touchStart.lastX = touch.clientX;
-      touchStart.lastY = touch.clientY;
       const deltaX = touch.clientX - touchStart.x;
       const deltaY = touch.clientY - touchStart.y;
       const horizontalDistance = Math.abs(deltaX);
@@ -1830,40 +1666,80 @@ function installContentPointerBehavior(
         return;
       }
 
-      if (finishTouchGesture(event.changedTouches[0] ?? null)) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    },
-    touchListenerOptions
-  );
-
-  doc.addEventListener(
-    "touchcancel",
-    (event) => {
-      if (pinchStart) {
-        pinchStart = null;
-        pinchPreviewScale = null;
+      const touch = event.changedTouches[0];
+      if (!touchStart || !touch) {
         touchStart = null;
-        if (pinchAnimationFrame !== null) {
-          contents.window.cancelAnimationFrame(pinchAnimationFrame);
-          pinchAnimationFrame = null;
+        return;
+      }
+
+      const gestureStart = touchStart;
+      touchStart = null;
+      if (hasTextSelection(contents.window)) {
+        return;
+      }
+
+      if (settingsRef.current.readingMode !== "page") {
+        const wasTap = isTapGesture({
+          startX: gestureStart.x,
+          startY: gestureStart.y,
+          endX: touch.clientX,
+          endY: touch.clientY
+        });
+        if (wasTap) {
+          const didTurn = turnFromClientX(touch.clientX);
+          if (!didTurn) {
+            onToggleControls();
+          }
+          suppressNextClick = true;
+          suppressClickTemporarily(contents, () => {
+            suppressNextClick = false;
+          });
+          event.preventDefault();
+          event.stopPropagation();
         }
-        // A cancelled pinch must not leave the temporary preview scale behind.
-        applyImageScaleToContent(contents, settingsRef.current);
-        suppressNextClick = true;
+        return;
+      }
+
+      const swipeDirection = getVerticalPageSwipeDirection({
+        startX: gestureStart.x,
+        startY: gestureStart.y,
+        endX: touch.clientX,
+        endY: touch.clientY,
+        viewportHeight: gestureStart.viewportHeight,
+        allowPrev: gestureStart.allowPrev,
+        allowNext: gestureStart.allowNext
+      });
+      if (swipeDirection) {
+        onPageTurn(swipeDirection);
         suppressClickTemporarily(contents, () => {
           suppressNextClick = false;
         });
+        suppressNextClick = true;
         event.preventDefault();
         event.stopPropagation();
         return;
       }
 
-      if (finishTouchGesture(null, false)) {
-        event.preventDefault();
-        event.stopPropagation();
+      const wasTap = isTapGesture({
+        startX: gestureStart.x,
+        startY: gestureStart.y,
+        endX: touch.clientX,
+        endY: touch.clientY
+      });
+      if (!wasTap) {
+        return;
       }
+
+      const didTurn = turnFromClientX(touch.clientX);
+      if (!didTurn) {
+        onToggleControls();
+      }
+      suppressNextClick = true;
+      suppressClickTemporarily(contents, () => {
+        suppressNextClick = false;
+      });
+      event.preventDefault();
+      event.stopPropagation();
     },
     touchListenerOptions
   );
