@@ -4,13 +4,14 @@ import {
   getImageScaleStylesheet,
   getLocationSpineIndex,
   getPageImageFrameHeight,
+  getPageSwipeAvailability,
   getPinchImageScale,
   getPageClickDirection,
   getProgressPercent,
   getScrollImagePageViewHeight,
   getScaledFixedLayoutWidth,
-  getSwipeDirection,
   getToolbarPageControls,
+  getVerticalPageSwipeDirection,
   getTouchDistance,
   isTapGesture
 } from "./readerInteraction";
@@ -73,19 +74,115 @@ describe("getPageClickDirection", () => {
   });
 });
 
-describe("getSwipeDirection", () => {
-  it("uses a left swipe for next and a right swipe for previous", () => {
-    expect(getSwipeDirection({ startX: 300, startY: 200, endX: 220, endY: 205 })).toBe(
-      "next"
-    );
-    expect(getSwipeDirection({ startX: 100, startY: 200, endX: 180, endY: 205 })).toBe(
-      "prev"
-    );
+describe("getVerticalPageSwipeDirection", () => {
+  it("uses an upward swipe for next and a downward swipe for previous", () => {
+    expect(
+      getVerticalPageSwipeDirection({
+        startX: 195,
+        startY: 620,
+        endX: 198,
+        endY: 480,
+        viewportHeight: 700
+      })
+    ).toBe("next");
+    expect(
+      getVerticalPageSwipeDirection({
+        startX: 195,
+        startY: 260,
+        endX: 192,
+        endY: 410,
+        viewportHeight: 700
+      })
+    ).toBe("prev");
   });
 
-  it("ignores short and mainly vertical gestures", () => {
-    expect(getSwipeDirection({ startX: 100, startY: 200, endX: 130, endY: 205 })).toBeNull();
-    expect(getSwipeDirection({ startX: 100, startY: 100, endX: 155, endY: 200 })).toBeNull();
+  it("ignores short, mainly horizontal, and scrolling-mode gestures", () => {
+    expect(
+      getVerticalPageSwipeDirection({
+        startX: 195,
+        startY: 620,
+        endX: 198,
+        endY: 570,
+        viewportHeight: 700
+      })
+    ).toBeNull();
+    expect(
+      getVerticalPageSwipeDirection({
+        startX: 80,
+        startY: 500,
+        endX: 250,
+        endY: 400,
+        viewportHeight: 700
+      })
+    ).toBeNull();
+    expect(
+      getVerticalPageSwipeDirection({
+        readingMode: "scroll",
+        startX: 195,
+        startY: 620,
+        endX: 195,
+        endY: 450,
+        viewportHeight: 700
+      })
+    ).toBeNull();
+  });
+
+  it("honors the page-edge permissions captured at touch start", () => {
+    const upwardSwipe = {
+      startX: 195,
+      startY: 620,
+      endX: 195,
+      endY: 460,
+      viewportHeight: 700
+    };
+    const downwardSwipe = {
+      startX: 195,
+      startY: 260,
+      endX: 195,
+      endY: 420,
+      viewportHeight: 700
+    };
+
+    expect(getVerticalPageSwipeDirection({ ...upwardSwipe, allowNext: false })).toBeNull();
+    expect(getVerticalPageSwipeDirection({ ...upwardSwipe, allowNext: true })).toBe("next");
+    expect(getVerticalPageSwipeDirection({ ...downwardSwipe, allowPrev: false })).toBeNull();
+    expect(getVerticalPageSwipeDirection({ ...downwardSwipe, allowPrev: true })).toBe("prev");
+  });
+});
+
+describe("getPageSwipeAvailability", () => {
+  it("allows both directions when the visual image fits in the viewport", () => {
+    expect(
+      getPageSwipeAvailability({
+        contentTop: 0,
+        contentBottom: 551,
+        viewportHeight: 844
+      })
+    ).toEqual({ prev: true, next: true, scrollable: false });
+  });
+
+  it("requires a fresh swipe from the matching edge for a tall or zoomed image", () => {
+    expect(
+      getPageSwipeAvailability({
+        contentTop: 0,
+        contentBottom: 1101,
+        viewportHeight: 844
+      })
+    ).toEqual({ prev: true, next: false, scrollable: true });
+    expect(
+      getPageSwipeAvailability({
+        contentTop: -130,
+        contentBottom: 971,
+        viewportHeight: 844
+      })
+    ).toEqual({ prev: false, next: false, scrollable: true });
+    expect(
+      getPageSwipeAvailability({
+        contentTop: -257,
+        contentBottom: 844,
+        viewportHeight: 844
+      })
+    ).toEqual({ prev: false, next: true, scrollable: true });
   });
 });
 

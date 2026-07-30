@@ -24,15 +24,17 @@ import {
   getLocationSpineIndex,
   getPageClickDirection,
   getPageImageFrameHeight,
+  getPageSwipeAvailability,
   getPinchImageScale,
   getProgressPercent,
   getScaledFixedLayoutWidth,
   getScrollImagePageViewHeight,
-  getSwipeDirection,
   getToolbarPageControls,
+  getVerticalPageSwipeDirection,
   getTouchDistance,
   isTapGesture,
-  type PageClickDirection
+  type PageClickDirection,
+  type PageSwipeAvailability
 } from "../lib/readerInteraction";
 import { installFileBackedEpubArchive } from "../lib/fileBackedEpubArchive";
 import { readBlobAsArrayBuffer } from "../lib/blobReader";
@@ -81,6 +83,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     side: "left" | "right";
     x: number;
     y: number;
+    viewportHeight: number;
   } | null>(null);
   const statusRef = useRef<LoadStatus>("loading");
   const progressSaveTimerRef = useRef<number | null>(null);
@@ -715,7 +718,8 @@ export function Reader({ file, onClose }: ReaderProps) {
     hotzoneTouchStartRef.current = {
       side,
       x: touch.clientX,
-      y: touch.clientY
+      y: touch.clientY,
+      viewportHeight: stageRef.current?.clientHeight ?? window.innerHeight
     };
   }
 
@@ -736,12 +740,13 @@ export function Reader({ file, onClose }: ReaderProps) {
       endX: touch.clientX,
       endY: touch.clientY
     });
-    const swipeDirection = getSwipeDirection({
+    const swipeDirection = getVerticalPageSwipeDirection({
       readingMode: "page",
       startX: start.x,
       startY: start.y,
       endX: touch.clientX,
-      endY: touch.clientY
+      endY: touch.clientY,
+      viewportHeight: start.viewportHeight
     });
     if (!wasTap && !swipeDirection) {
       return;
@@ -1465,7 +1470,13 @@ function installContentPointerBehavior(
   let didDrag = false;
   let lastX = 0;
   let lastY = 0;
-  let touchStart: { x: number; y: number; startedOnImage: boolean } | null = null;
+  let touchStart: {
+    x: number;
+    y: number;
+    viewportHeight: number;
+    allowPrev: boolean;
+    allowNext: boolean;
+  } | null = null;
   let pinchStart: { distance: number; imageScale: number } | null = null;
   let pinchPreviewScale: number | null = null;
   let pinchAnimationFrame: number | null = null;
@@ -1571,10 +1582,16 @@ function installContentPointerBehavior(
       }
 
       const touch = event.touches[0];
+      const swipeAvailability =
+        settingsRef.current.readingMode === "page"
+          ? getContentPageSwipeAvailability(contents)
+          : { prev: false, next: false, scrollable: false };
       touchStart = {
         x: touch.clientX,
         y: touch.clientY,
-        startedOnImage: isImageEventTarget(event.target)
+        viewportHeight: getContentViewportHeight(contents),
+        allowPrev: swipeAvailability.prev,
+        allowNext: swipeAvailability.next
       };
     },
     touchListenerOptions
@@ -1601,14 +1618,23 @@ function installContentPointerBehavior(
       }
 
       const touch = event.touches[0];
-      const horizontalDistance = Math.abs(touch.clientX - touchStart.x);
-      const verticalDistance = Math.abs(touch.clientY - touchStart.y);
+      const deltaX = touch.clientX - touchStart.x;
+      const deltaY = touch.clientY - touchStart.y;
+      const horizontalDistance = Math.abs(deltaX);
+      const verticalDistance = Math.abs(deltaY);
+      const directionAllowed =
+        (deltaY < 0 && touchStart.allowNext) || (deltaY > 0 && touchStart.allowPrev);
+
+      // Capture only a clearly vertical page gesture that was eligible when
+      // the finger first touched the page. A tall or zoomed image keeps native
+      // panning until the user releases at an edge and starts a fresh swipe.
       if (
-        !isZoomedImageDocument(doc, settingsRef.current) &&
-        horizontalDistance > 12 &&
-        horizontalDistance > verticalDistance
+        directionAllowed &&
+        verticalDistance > 12 &&
+        verticalDistance > horizontalDistance * 1.2
       ) {
         event.preventDefault();
+        event.stopPropagation();
       }
     },
     touchListenerOptions
@@ -1674,24 +1700,14 @@ function installContentPointerBehavior(
         return;
       }
 
-      if (
-        gestureStart.startedOnImage &&
-        isZoomedImageDocument(doc, settingsRef.current) &&
-        !isTapGesture({
-          startX: gestureStart.x,
-          startY: gestureStart.y,
-          endX: touch.clientX,
-          endY: touch.clientY
-        })
-      ) {
-        return;
-      }
-
-      const swipeDirection = getSwipeDirection({
+      const swipeDirection = getVerticalPageSwipeDirection({
         startX: gestureStart.x,
         startY: gestureStart.y,
         endX: touch.clientX,
-        endY: touch.clientY
+        endY: touch.clientY,
+        viewportHeight: gestureStart.viewportHeight,
+        allowPrev: gestureStart.allowPrev,
+        allowNext: gestureStart.allowNext
       });
       if (swipeDirection) {
         onPageTurn(swipeDirection);
@@ -1758,6 +1774,68 @@ function installContentPointerBehavior(
     },
     true
   );
+}
+
+function getContentPageSwipeAvailability(contents: Contents): PageSwipeAvailability {
+  const doc = contents.document;
+  const root = doc.documentElement;
+  const isImageDocument =
+    root.classList.contains("reader-image-document") || Boolean(doc.querySelector("img, svg image"));
+  if (!isImageDocument) {
+    return { prev: true, next: true, scrollable: false };
+  }
+
+  const viewportHeight = getContentViewportHeight(contents);
+  const bounds = getVisualImageBounds(doc);
+  if (!bounds) {
+    return { prev: true, next: true, scrollable: false };
+  }
+
+  return getPageSwipeAvailability({
+    contentTop: bounds.top,
+    contentBottom: bounds.bottom,
+    viewportHeight
+  });
+}
+
+function getVisualImageBounds(doc: Document): { top: number; bottom: number } | null {
+  const candidates = Array.from(doc.querySelectorAll("img, svg"));
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+
+  for (const element of candidates) {
+    const bounds = element.getBoundingClientRect();
+    if (
+      Number.isFinite(bounds.top) &&
+      Number.isFinite(bounds.bottom) &&
+      bounds.bottom > bounds.top
+    ) {
+      top = Math.min(top, bounds.top);
+      bottom = Math.max(bottom, bounds.bottom);
+    }
+  }
+
+  return Number.isFinite(top) && Number.isFinite(bottom) && bottom > top
+    ? { top, bottom }
+    : null;
+}
+
+function getContentViewportHeight(contents: Contents): number {
+  const windowHeight = readFiniteLayoutValue(contents.window.innerHeight);
+  if (windowHeight > 0) {
+    return windowHeight;
+  }
+
+  const rootHeight = readFiniteLayoutValue(contents.document.documentElement?.clientHeight);
+  if (rootHeight > 0) {
+    return rootHeight;
+  }
+
+  return readFiniteLayoutValue(contents.document.body?.clientHeight);
+}
+
+function readFiniteLayoutValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
 function isZoomedImageDocument(doc: Document, settings: ReaderSettings): boolean {

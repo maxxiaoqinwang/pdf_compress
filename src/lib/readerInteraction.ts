@@ -9,20 +9,37 @@ type PageClickInput = {
   edgeRatio?: number;
 };
 
-type SwipeGestureInput = {
+type VerticalPageSwipeInput = {
   readingMode?: ReadingMode;
   startX: number;
   startY: number;
   endX: number;
   endY: number;
+  viewportHeight?: number;
+  allowPrev?: boolean;
+  allowNext?: boolean;
   minDistance?: number;
+  maxDistance?: number;
+  distanceRatio?: number;
   dominanceRatio?: number;
+};
+
+type PageSwipeBoundsInput = {
+  contentTop: number;
+  contentBottom: number;
+  viewportHeight: number;
+  tolerance?: number;
 };
 
 export type PageClickDirection = "prev" | "next";
 export type ToolbarPageControl = {
   direction: PageClickDirection;
   label: string;
+};
+export type PageSwipeAvailability = {
+  prev: boolean;
+  next: boolean;
+  scrollable: boolean;
 };
 
 type TapGestureInput = {
@@ -80,26 +97,77 @@ export function getPageClickDirection({
   return side === "left" ? "prev" : "next";
 }
 
-export function getSwipeDirection({
+export function getVerticalPageSwipeDirection({
   readingMode = "page",
   startX,
   startY,
   endX,
   endY,
-  minDistance = 48,
-  dominanceRatio = 1.25
-}: SwipeGestureInput): PageClickDirection | null {
+  viewportHeight = 0,
+  allowPrev = true,
+  allowNext = true,
+  minDistance = 56,
+  maxDistance = 96,
+  distanceRatio = 0.12,
+  dominanceRatio = 1.2
+}: VerticalPageSwipeInput): PageClickDirection | null {
   if (readingMode !== "page") {
     return null;
   }
 
   const deltaX = endX - startX;
   const deltaY = endY - startY;
-  if (Math.abs(deltaX) < minDistance || Math.abs(deltaX) < Math.abs(deltaY) * dominanceRatio) {
+  const verticalDistance = Math.abs(deltaY);
+  const horizontalDistance = Math.abs(deltaX);
+  const safeViewportHeight =
+    typeof viewportHeight === "number" && Number.isFinite(viewportHeight)
+      ? Math.max(0, viewportHeight)
+      : 0;
+  const distanceThreshold = Math.min(
+    Math.max(minDistance, maxDistance),
+    Math.max(minDistance, safeViewportHeight * distanceRatio)
+  );
+
+  if (
+    verticalDistance < distanceThreshold ||
+    verticalDistance < horizontalDistance * dominanceRatio
+  ) {
     return null;
   }
 
-  return deltaX < 0 ? "next" : "prev";
+  const direction: PageClickDirection = deltaY < 0 ? "next" : "prev";
+  if ((direction === "next" && !allowNext) || (direction === "prev" && !allowPrev)) {
+    return null;
+  }
+
+  return direction;
+}
+
+export function getPageSwipeAvailability({
+  contentTop,
+  contentBottom,
+  viewportHeight,
+  tolerance = 4
+}: PageSwipeBoundsInput): PageSwipeAvailability {
+  const safeViewportHeight = finiteOrZero(viewportHeight);
+  const safeTop = finiteOrZero(contentTop);
+  const safeBottom = finiteOrZero(contentBottom);
+  const safeTolerance = Math.max(0, finiteOrZero(tolerance));
+
+  if (safeViewportHeight <= 0 || safeBottom <= safeTop) {
+    return { prev: true, next: true, scrollable: false };
+  }
+
+  const contentHeight = safeBottom - safeTop;
+  if (contentHeight <= safeViewportHeight + safeTolerance) {
+    return { prev: true, next: true, scrollable: false };
+  }
+
+  return {
+    prev: safeTop >= -safeTolerance,
+    next: safeBottom <= safeViewportHeight + safeTolerance,
+    scrollable: true
+  };
 }
 
 export function isTapGesture({
@@ -370,6 +438,10 @@ function readSizePair(
 
 function readPositiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function finiteOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function normalizeImageScale(value: number): number {
