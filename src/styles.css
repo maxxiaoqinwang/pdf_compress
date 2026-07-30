@@ -225,6 +225,19 @@ h1 {
   overscroll-behavior: contain;
 }
 
+.reader-page-gesture-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .reader-chrome-top,
 .bottom-toolbar {
   position: absolute;

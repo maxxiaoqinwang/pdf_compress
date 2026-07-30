@@ -65,6 +65,22 @@ type ReaderDocument = Document & {
   __readerImageHeightCleanup?: () => void;
 };
 
+type PageGesturePoint = {
+  clientX: number;
+  clientY: number;
+};
+
+type PageGestureState = {
+  points: Map<number, PageGesturePoint>;
+  swipeStart: (PageGesturePoint & {
+    lastX: number;
+    lastY: number;
+    viewportHeight: number;
+  }) | null;
+  pinchStart: { distance: number; imageScale: number } | null;
+  previewScale: number | null;
+};
+
 const COMPACT_READER_QUERY =
   "(max-width: 760px), (pointer: coarse) and (max-height: 500px)";
 const LAZY_RESOURCE_THRESHOLD = 32 * 1024 * 1024;
@@ -72,11 +88,18 @@ const PROGRESS_SAVE_DELAY = 650;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const bookRef = useRef<Book | null>(null);
   const lazyResourcesRef = useRef<LazyEpubResourceController | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const pageTurnLockedRef = useRef(false);
+  const pageGestureRef = useRef<PageGestureState>({
+    points: new Map(),
+    swipeStart: null,
+    pinchStart: null,
+    previewScale: null
+  });
   const statusRef = useRef<LoadStatus>("loading");
   const progressSaveTimerRef = useRef<number | null>(null);
   const activeSheetRef = useRef<ReaderSheet>(null);
@@ -123,6 +146,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   );
   const [isCompactViewport, setIsCompactViewport] = useState(readCompactViewport);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [imageDocumentActive, setImageDocumentActive] = useState(false);
 
   const pageControls = getToolbarPageControls(gripMode);
 
@@ -399,6 +423,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
 
     renditionRef.current = rendition;
+    setImageDocumentActive(false);
     setStatus("loading");
     setMessage(
       lowMemoryScroll
@@ -414,6 +439,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       (direction) => void turnPage(direction),
       (nextImageScale) => setImageScale(nextImageScale),
       () => uiActionsRef.current.toggleControls(),
+      (isImageDocument) => setImageDocumentActive(isImageDocument),
       lazyResources
     );
     registerThemes(rendition);
@@ -477,6 +503,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       }
       detachLazyResourceCleanup();
       lazyResources?.resetRenderedSections();
+      setImageDocumentActive(false);
       host.replaceChildren();
     };
   }, [book, file.size, readingMode]);
@@ -668,6 +695,172 @@ export function Reader({ file, onClose }: ReaderProps) {
     setReadingMode(mode);
   }
 
+  function resetPageGesture(restorePreview = false) {
+    const gesture = pageGestureRef.current;
+    gesture.points.clear();
+    gesture.swipeStart = null;
+    gesture.pinchStart = null;
+    gesture.previewScale = null;
+
+    if (!restorePreview) {
+      return;
+    }
+
+    const rendition = renditionRef.current;
+    if (rendition) {
+      applyImageScaleToRenderedContents(rendition, latestSettingsRef.current);
+    }
+  }
+
+  function handlePageGesturePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === "mouse") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is optional in older embedded browsers.
+    }
+
+    const gesture = pageGestureRef.current;
+    const point = { clientX: event.clientX, clientY: event.clientY };
+    gesture.points.set(event.pointerId, point);
+
+    if (gesture.points.size === 1) {
+      gesture.swipeStart = {
+        ...point,
+        lastX: point.clientX,
+        lastY: point.clientY,
+        viewportHeight: stageRef.current?.clientHeight || window.innerHeight
+      };
+      gesture.pinchStart = null;
+      gesture.previewScale = null;
+      return;
+    }
+
+    if (gesture.points.size === 2) {
+      const [first, second] = Array.from(gesture.points.values());
+      gesture.pinchStart = {
+        distance: getTouchDistance(first, second),
+        imageScale
+      };
+      gesture.previewScale = imageScale;
+      gesture.swipeStart = null;
+      return;
+    }
+
+    gesture.swipeStart = null;
+  }
+
+  function handlePageGesturePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const gesture = pageGestureRef.current;
+    if (!gesture.points.has(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    gesture.points.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY
+    });
+
+    if (gesture.pinchStart && gesture.points.size >= 2) {
+      const [first, second] = Array.from(gesture.points.values());
+      const nextImageScale = getPinchImageScale({
+        startScale: gesture.pinchStart.imageScale,
+        startDistance: gesture.pinchStart.distance,
+        currentDistance: getTouchDistance(first, second)
+      });
+      gesture.previewScale = nextImageScale;
+      const rendition = renditionRef.current;
+      if (rendition) {
+        getRenderedContents(rendition).forEach((contents) =>
+          previewImageScale(contents, nextImageScale)
+        );
+      }
+      return;
+    }
+
+    if (gesture.swipeStart && gesture.points.size === 1) {
+      gesture.swipeStart.lastX = event.clientX;
+      gesture.swipeStart.lastY = event.clientY;
+    }
+  }
+
+  function handlePageGesturePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    const gesture = pageGestureRef.current;
+    if (!gesture.points.has(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (gesture.pinchStart) {
+      const committedScale = gesture.previewScale ?? gesture.pinchStart.imageScale;
+      resetPageGesture();
+      setImageScale(committedScale);
+      return;
+    }
+
+    const start = gesture.swipeStart;
+    const lastPoint = start ? { x: start.lastX, y: start.lastY } : null;
+    const changedPoint = { x: event.clientX, y: event.clientY };
+    resetPageGesture();
+    if (!start || !lastPoint) {
+      return;
+    }
+
+    const changedDistance = Math.hypot(
+      changedPoint.x - start.clientX,
+      changedPoint.y - start.clientY
+    );
+    const lastDistance = Math.hypot(
+      lastPoint.x - start.clientX,
+      lastPoint.y - start.clientY
+    );
+    const endPoint = changedDistance >= lastDistance ? changedPoint : lastPoint;
+    const swipeDirection = getVerticalPageSwipeDirection({
+      readingMode: "page",
+      startX: start.clientX,
+      startY: start.clientY,
+      endX: endPoint.x,
+      endY: endPoint.y,
+      viewportHeight: start.viewportHeight
+    });
+
+    if (swipeDirection) {
+      void turnPage(swipeDirection);
+      return;
+    }
+
+    if (
+      isTapGesture({
+        startX: start.clientX,
+        startY: start.clientY,
+        endX: endPoint.x,
+        endY: endPoint.y
+      })
+    ) {
+      uiActionsRef.current.toggleControls();
+    }
+  }
+
+  function handlePageGesturePointerCancel(event: React.PointerEvent<HTMLDivElement>) {
+    const gesture = pageGestureRef.current;
+    if (!gesture.points.has(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    resetPageGesture(gesture.pinchStart !== null);
+  }
+
   function handleStageClick(event: React.MouseEvent<HTMLDivElement>) {
     if (event.target === event.currentTarget || event.target === mountRef.current) {
       uiActionsRef.current.toggleControls();
@@ -711,13 +904,26 @@ export function Reader({ file, onClose }: ReaderProps) {
       </div>
 
       <div className="reader-layout">
-        <div className="reader-stage" onClick={handleStageClick}>
+        <div ref={stageRef} className="reader-stage" onClick={handleStageClick}>
           {status !== "ready" ? (
             <div className={`reader-message ${status}`} aria-live="polite">
               {message}
             </div>
           ) : null}
           <div ref={mountRef} className="rendition-root" />
+          {status === "ready" &&
+          readingMode === "page" &&
+          imageDocumentActive &&
+          imageScale <= 100 ? (
+            <div
+              className="reader-page-gesture-layer"
+              aria-hidden="true"
+              onPointerDown={handlePageGesturePointerDown}
+              onPointerMove={handlePageGesturePointerMove}
+              onPointerUp={handlePageGesturePointerUp}
+              onPointerCancel={handlePageGesturePointerCancel}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -975,11 +1181,15 @@ function registerContentEnhancements(
   onPageTurn: (direction: PageClickDirection) => void,
   onImageScaleChange: (nextImageScale: number) => void,
   onToggleControls: () => void,
+  onImageDocumentChange: (isImageDocument: boolean) => void,
   lazyResources?: LazyEpubResourceController | null
 ) {
   rendition.hooks.content.register((contents: Contents) => {
     lazyResources?.activateDocument(contents.document);
     applyImageScaleToContent(contents, settingsRef.current);
+    onImageDocumentChange(
+      contents.document.documentElement.classList.contains("reader-image-document")
+    );
     installContentPointerBehavior(
       contents,
       settingsRef,

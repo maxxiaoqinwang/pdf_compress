@@ -99,24 +99,26 @@ function createTestFile(name: string, lastModified: number) {
   return { file, arrayBuffer };
 }
 
-type TouchPoint = { clientX: number; clientY: number };
+type PointerPoint = {
+  pointerId: number;
+  pointerType?: string;
+  clientX: number;
+  clientY: number;
+};
 
-function dispatchTouchEvent(
+function dispatchPointerEvent(
   target: Element,
-  type: "touchstart" | "touchmove" | "touchend",
-  touches: TouchPoint[],
-  changedTouches: TouchPoint[] = touches
+  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+  point: PointerPoint
 ) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
-    touches: { configurable: true, value: touches },
-    changedTouches: { configurable: true, value: changedTouches }
+    pointerId: { configurable: true, value: point.pointerId },
+    pointerType: { configurable: true, value: point.pointerType ?? "touch" },
+    clientX: { configurable: true, value: point.clientX },
+    clientY: { configurable: true, value: point.clientY }
   });
   target.dispatchEvent(event);
-}
-
-function dispatchClickEvent(target: Element, clientX: number) {
-  target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX }));
 }
 
 describe("Reader mobile scroll controls", () => {
@@ -252,7 +254,7 @@ describe("Reader mobile scroll controls", () => {
     });
   });
 
-  it("removes left and right page tap zones in paginated mode", async () => {
+  it("uses a full-surface vertical gesture layer without restoring side taps", async () => {
     const { file } = createTestFile("comic.epub", 3);
     localStorage.setItem(
       `epub-reader-progress-v2:${createBookKey(file)}`,
@@ -280,19 +282,72 @@ describe("Reader mobile scroll controls", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector(".reader-hotzones")).not.toBeInTheDocument();
-    expect(container.querySelector(".reader-hotzone")).not.toBeInTheDocument();
-
-    const image = contents.document.querySelector("img") as HTMLImageElement;
-    act(() => {
-      dispatchTouchEvent(image, "touchstart", [{ clientX: 389, clientY: 400 }]);
-      dispatchTouchEvent(image, "touchend", [], [{ clientX: 389, clientY: 400 }]);
-      dispatchTouchEvent(image, "touchstart", [{ clientX: 1, clientY: 400 }]);
-      dispatchTouchEvent(image, "touchend", [], [{ clientX: 1, clientY: 400 }]);
-      dispatchClickEvent(image, 389);
+    const gestureLayer = await waitFor(() => {
+      const layer = container.querySelector(".reader-page-gesture-layer");
+      expect(layer).toBeInTheDocument();
+      return layer as HTMLElement;
     });
 
+    act(() => {
+      dispatchPointerEvent(gestureLayer, "pointerdown", {
+        pointerId: 1,
+        pointerType: "touch",
+        clientX: 389,
+        clientY: 400
+      });
+      dispatchPointerEvent(gestureLayer, "pointerup", {
+        pointerId: 1,
+        pointerType: "touch",
+        clientX: 389,
+        clientY: 400
+      });
+    });
     expect(mocks.rendition.next).not.toHaveBeenCalled();
     expect(mocks.rendition.prev).not.toHaveBeenCalled();
+
+    act(() => {
+      dispatchPointerEvent(gestureLayer, "pointerdown", {
+        pointerId: 2,
+        pointerType: "touch",
+        clientX: 195,
+        clientY: 760
+      });
+      dispatchPointerEvent(gestureLayer, "pointermove", {
+        pointerId: 2,
+        pointerType: "touch",
+        clientX: 195,
+        clientY: 620
+      });
+      dispatchPointerEvent(gestureLayer, "pointerup", {
+        pointerId: 2,
+        pointerType: "touch",
+        clientX: 195,
+        clientY: 620
+      });
+    });
+    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
+
+    await new Promise((resolve) => window.setTimeout(resolve, 220));
+    act(() => {
+      dispatchPointerEvent(gestureLayer, "pointerdown", {
+        pointerId: 3,
+        pointerType: "touch",
+        clientX: 195,
+        clientY: 180
+      });
+      dispatchPointerEvent(gestureLayer, "pointermove", {
+        pointerId: 3,
+        pointerType: "touch",
+        clientX: 195,
+        clientY: 340
+      });
+      dispatchPointerEvent(gestureLayer, "pointerup", {
+        pointerId: 3,
+        pointerType: "touch",
+        clientX: 195,
+        clientY: 340
+      });
+    });
+    await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
 });
