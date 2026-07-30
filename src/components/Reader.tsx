@@ -1463,7 +1463,9 @@ function installContentPointerBehavior(
       const touch = event.touches[0];
       const swipeAvailability =
         settingsRef.current.readingMode === "page"
-          ? getContentPageSwipeAvailability(contents)
+          ? settingsRef.current.imageScale <= 100
+            ? { prev: true, next: true, scrollable: false }
+            : getContentPageSwipeAvailability(contents)
           : { prev: false, next: false, scrollable: false };
       touchStart = {
         x: touch.clientX,
@@ -1475,13 +1477,6 @@ function installContentPointerBehavior(
         allowPrev: swipeAvailability.prev,
         allowNext: swipeAvailability.next
       };
-      if (settingsRef.current.readingMode === "page" && !swipeAvailability.scrollable) {
-        // A page that visually fits has nothing to pan. Claim the gesture at
-        // touchstart so WebKit cannot convert it into native scrolling and
-        // cancel the later vertical swipe sequence.
-        event.preventDefault();
-        event.stopPropagation();
-      }
     },
     touchListenerOptions
   );

@@ -199,6 +199,7 @@ export function isTapGesture({
 export function getImageScaleStylesheet(imageScale: number): string {
   const scale = normalizeImageScale(imageScale);
   const cursor = scale > 100 ? "grab" : "auto";
+  const paginatedTouchAction = scale > 100 ? "pan-x pan-y" : "none";
 
   return `
       html.reader-image-document {
@@ -248,6 +249,17 @@ export function getImageScaleStylesheet(imageScale: number): string {
         user-select: none !important;
         -webkit-user-drag: none !important;
         touch-action: pan-x pan-y !important;
+      }
+      html.reader-page-mode:not(.reader-image-document),
+      html.reader-page-mode:not(.reader-image-document) body {
+        touch-action: none !important;
+      }
+      html.reader-page-mode.reader-image-document,
+      html.reader-page-mode.reader-image-document body,
+      html.reader-page-mode.reader-image-document img,
+      html.reader-page-mode.reader-image-document svg,
+      html.reader-page-mode.reader-image-document svg image {
+        touch-action: ${paginatedTouchAction} !important;
       }
     `;
 }

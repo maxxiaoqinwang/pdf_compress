@@ -231,6 +231,22 @@ describe("getImageScaleStylesheet", () => {
     expect(stylesheet).not.toMatch(/(^|\n)\s*html, body/);
     expect(stylesheet).not.toMatch(/(^|\n)\s*img\s*\{/);
   });
+
+  it("gives paginated 100% pages ownership of touch gestures", () => {
+    const stylesheet = getImageScaleStylesheet(100);
+
+    expect(stylesheet).toContain("html.reader-page-mode.reader-image-document");
+    expect(stylesheet).toContain("touch-action: none !important");
+  });
+
+  it("returns native panning after a paginated image is enlarged", () => {
+    const stylesheet = getImageScaleStylesheet(175);
+    const pageModeRule = stylesheet.slice(
+      stylesheet.indexOf("html.reader-page-mode.reader-image-document")
+    );
+
+    expect(pageModeRule).toContain("touch-action: pan-x pan-y !important");
+  });
 });
 
 describe("getEstimatedSingleImageHeight", () => {
