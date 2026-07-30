@@ -127,6 +127,19 @@ describe("getVerticalPageSwipeDirection", () => {
     ).toBeNull();
   });
 
+  it("accepts a short fast flick but rejects the same distance when dragged slowly", () => {
+    const gesture = {
+      startX: 195,
+      startY: 620,
+      endX: 195,
+      endY: 580,
+      viewportHeight: 844
+    };
+
+    expect(getVerticalPageSwipeDirection({ ...gesture, durationMs: 80 })).toBe("next");
+    expect(getVerticalPageSwipeDirection({ ...gesture, durationMs: 400 })).toBeNull();
+  });
+
   it("honors the page-edge permissions captured at touch start", () => {
     const upwardSwipe = {
       startX: 195,

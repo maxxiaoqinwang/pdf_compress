@@ -18,9 +18,12 @@ type VerticalPageSwipeInput = {
   viewportHeight?: number;
   allowPrev?: boolean;
   allowNext?: boolean;
+  durationMs?: number;
   minDistance?: number;
   maxDistance?: number;
   distanceRatio?: number;
+  minFlickDistance?: number;
+  minVelocity?: number;
   dominanceRatio?: number;
 };
 
@@ -106,10 +109,13 @@ export function getVerticalPageSwipeDirection({
   viewportHeight = 0,
   allowPrev = true,
   allowNext = true,
-  minDistance = 56,
-  maxDistance = 96,
-  distanceRatio = 0.12,
-  dominanceRatio = 1.2
+  durationMs = Number.POSITIVE_INFINITY,
+  minDistance = 48,
+  maxDistance = 72,
+  distanceRatio = 0.08,
+  minFlickDistance = 28,
+  minVelocity = 0.35,
+  dominanceRatio = 1.15
 }: VerticalPageSwipeInput): PageClickDirection | null {
   if (readingMode !== "page") {
     return null;
@@ -119,19 +125,29 @@ export function getVerticalPageSwipeDirection({
   const deltaY = endY - startY;
   const verticalDistance = Math.abs(deltaY);
   const horizontalDistance = Math.abs(deltaX);
+  if (
+    verticalDistance < Math.max(0, minFlickDistance) ||
+    verticalDistance < horizontalDistance * Math.max(1, dominanceRatio)
+  ) {
+    return null;
+  }
+
   const safeViewportHeight =
     typeof viewportHeight === "number" && Number.isFinite(viewportHeight)
       ? Math.max(0, viewportHeight)
       : 0;
+  const lowerDistance = Math.max(0, Math.min(minDistance, maxDistance));
+  const upperDistance = Math.max(lowerDistance, Math.max(minDistance, maxDistance));
   const distanceThreshold = Math.min(
-    Math.max(minDistance, maxDistance),
-    Math.max(minDistance, safeViewportHeight * distanceRatio)
+    upperDistance,
+    Math.max(lowerDistance, safeViewportHeight * Math.max(0, distanceRatio))
   );
-
-  if (
-    verticalDistance < distanceThreshold ||
-    verticalDistance < horizontalDistance * dominanceRatio
-  ) {
+  const safeDuration =
+    typeof durationMs === "number" && Number.isFinite(durationMs)
+      ? Math.max(1, durationMs)
+      : Number.POSITIVE_INFINITY;
+  const isFastFlick = verticalDistance / safeDuration >= Math.max(0, minVelocity);
+  if (verticalDistance < distanceThreshold && !isFastFlick) {
     return null;
   }
 
