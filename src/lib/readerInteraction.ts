@@ -118,52 +118,52 @@ export function getImageScaleStylesheet(imageScale: number): string {
 
   return `
       html.reader-image-document {
-        width: var(--reader-fixed-layout-width, ${scale}%) !important;
+        width: 100% !important;
         min-width: 100% !important;
-        max-width: none !important;
-        height: auto !important;
+        max-width: 100% !important;
+        height: 100% !important;
         min-height: 100% !important;
         overflow: auto !important;
         overscroll-behavior: contain !important;
         touch-action: pan-x pan-y !important;
+        -webkit-text-size-adjust: 100% !important;
+        --reader-image-scale: ${scale}%;
       }
       html.reader-image-document body {
-        display: block !important;
-        width: 100% !important;
-        max-width: none !important;
-        height: auto !important;
         min-height: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
         overflow: visible !important;
         touch-action: pan-x pan-y !important;
       }
-      html.reader-image-document img {
+      html.reader-image-document img,
+      html.reader-image-document svg,
+      html.reader-image-document svg image {
+        max-width: none !important;
+        cursor: ${cursor} !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -webkit-user-drag: none !important;
+        touch-action: pan-x pan-y !important;
+      }
+      html.reader-image-document:not(.reader-fixed-layout-page) body {
         display: block !important;
         width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+      }
+      html.reader-image-document:not(.reader-fixed-layout-page) img,
+      html.reader-image-document:not(.reader-fixed-layout-page) svg {
+        display: block !important;
+        width: var(--reader-image-scale, ${scale}%) !important;
         max-width: none !important;
         height: auto !important;
         object-fit: contain !important;
         margin: 0 !important;
-        cursor: ${cursor} !important;
-        user-select: none !important;
-        -webkit-user-drag: none !important;
-        touch-action: pan-x pan-y !important;
       }
-      html.reader-image-document svg {
-        display: block !important;
-        width: 100% !important;
+      html.reader-image-document.reader-fixed-layout-page body {
         max-width: none !important;
-        height: auto !important;
-        margin: 0 !important;
-        cursor: ${cursor} !important;
-        user-select: none !important;
-        touch-action: pan-x pan-y !important;
-      }
-      html.reader-image-document svg image {
-        user-select: none !important;
-        -webkit-user-drag: none !important;
-        touch-action: pan-x pan-y !important;
+        transform-origin: 0 0 !important;
       }
     `;
 }
@@ -197,18 +197,6 @@ export function getEstimatedSingleImageHeight({
 
   const safeFallback = readPositiveNumber(fallbackHeight);
   return safeFallback === null ? null : Math.ceil(safeFallback);
-}
-
-export function getScaledFixedLayoutWidth(
-  viewportContent: string | null | undefined,
-  imageNaturalWidth: number | null | undefined,
-  imageScale: number
-): number | null {
-  const scale = normalizeImageScale(imageScale);
-  const viewportWidth = readViewportWidth(viewportContent);
-  const baseWidth = viewportWidth ?? readPositiveNumber(imageNaturalWidth);
-
-  return baseWidth === null ? null : Math.round((baseWidth * scale) / 100);
 }
 
 export function getToolbarPageControls(gripMode: GripMode): ToolbarPageControl[] {
@@ -329,10 +317,6 @@ export function getLocationSpineIndex(location: unknown): number | null {
   }
 
   return typeof candidate.index === "number" ? candidate.index : null;
-}
-
-function readViewportWidth(viewportContent: string | null | undefined): number | null {
-  return readViewportDimension(viewportContent, "width");
 }
 
 function readViewportSize(
