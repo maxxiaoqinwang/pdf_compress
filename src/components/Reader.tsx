@@ -26,6 +26,7 @@ import {
   getPageImageFrameHeight,
   getPinchImageScale,
   getProgressPercent,
+  getScaledFixedLayoutWidth,
   getScrollImagePageViewHeight,
   getSwipeDirection,
   getToolbarPageControls,
@@ -36,14 +37,6 @@ import {
 import { installFileBackedEpubArchive } from "../lib/fileBackedEpubArchive";
 import { readBlobAsArrayBuffer } from "../lib/blobReader";
 import { applyContentStylesheet } from "../lib/contentStylesheet";
-import {
-  applyImagePageScale,
-  getImagePageDisplayHeight,
-  getImagePageInfo,
-  getImagePageLoadTarget,
-  type ImagePageInfo,
-  type ImagePageMedia
-} from "../lib/imagePage";
 import {
   attachLazyResourceCleanup,
   installLazyEpubResourceLoading,
@@ -59,10 +52,7 @@ type ReaderProps = {
 
 type LoadStatus = "loading" | "ready" | "error";
 type ReaderSheet = "toc" | "settings" | null;
-type ReaderSettings = ReaderPreferences & {
-  readingMode: ReadingMode;
-  fixedLayout: boolean;
-};
+type ReaderSettings = ReaderPreferences & { readingMode: ReadingMode };
 type ProgressSnapshot = {
   percent: number;
   label: string;
@@ -71,12 +61,6 @@ type ProgressSnapshot = {
 type ReaderDocument = Document & {
   __readerPointerBehaviorInstalled?: boolean;
   __readerImageHeightCleanup?: () => void;
-  __readerAppliedImageScale?: number;
-  __readerAppliedReadingMode?: ReadingMode;
-  __readerImageHeightScale?: number;
-  __readerImageHeightMode?: ReadingMode;
-  __readerImagePageInfo?: ImagePageInfo;
-  __readerAnchorRestoreRevision?: number;
 };
 
 const COMPACT_READER_QUERY =
@@ -92,6 +76,12 @@ export function Reader({ file, onClose }: ReaderProps) {
   const lazyResourcesRef = useRef<LazyEpubResourceController | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const pageTurnLockedRef = useRef(false);
+  const lastHotzoneTouchRef = useRef(0);
+  const hotzoneTouchStartRef = useRef<{
+    side: "left" | "right";
+    x: number;
+    y: number;
+  } | null>(null);
   const statusRef = useRef<LoadStatus>("loading");
   const progressSaveTimerRef = useRef<number | null>(null);
   const activeSheetRef = useRef<ReaderSheet>(null);
@@ -107,8 +97,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const restoreCfiRef = useRef<string | null>(savedProgress.cfi);
   const latestSettingsRef = useRef<ReaderSettings>({
     ...savedPreferences,
-    readingMode: savedProgress.readingMode,
-    fixedLayout: false
+    readingMode: savedProgress.readingMode
   });
   const latestProgressRef = useRef({
     cfi: savedProgress.cfi,
@@ -139,6 +128,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   );
   const [isCompactViewport, setIsCompactViewport] = useState(readCompactViewport);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [imageDocumentActive, setImageDocumentActive] = useState(false);
 
   const pageControls = getToolbarPageControls(gripMode);
 
@@ -151,8 +141,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     imageScale,
     lineHeight,
     readingMode,
-    theme,
-    fixedLayout: Boolean(book && isPrePaginatedBook(book))
+    theme
   };
   latestProgressRef.current = {
     cfi: currentCfi,
@@ -416,6 +405,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
 
     renditionRef.current = rendition;
+    setImageDocumentActive(false);
     setStatus("loading");
     setMessage(
       lowMemoryScroll
@@ -431,6 +421,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       (direction) => void turnPage(direction),
       (nextImageScale) => setImageScale(nextImageScale),
       () => uiActionsRef.current.toggleControls(),
+      (isImageDocument) => setImageDocumentActive(isImageDocument),
       lazyResources
     );
     registerThemes(rendition);
@@ -441,17 +432,11 @@ export function Reader({ file, onClose }: ReaderProps) {
       lineHeight,
       imageScale,
       readingMode,
-      gripMode,
-      isPrePaginatedBook(book)
+      gripMode
     );
 
     const handleRelocated = (location: Location) => {
       updateProgressFromLocation(location, book);
-      window.requestAnimationFrame(() => {
-        if (renditionRef.current === rendition) {
-          applyImageScaleToRenderedContents(rendition, latestSettingsRef.current);
-        }
-      });
     };
     rendition.on("relocated", handleRelocated);
 
@@ -467,8 +452,6 @@ export function Reader({ file, onClose }: ReaderProps) {
         if (cancelled) {
           return;
         }
-
-        applyImageScaleToRenderedContents(rendition, latestSettingsRef.current);
 
         if (readingMode === "scroll" && !lowMemoryScroll) {
           // Small text-heavy books can afford a larger look-ahead window.
@@ -502,6 +485,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       }
       detachLazyResourceCleanup();
       lazyResources?.resetRenderedSections();
+      setImageDocumentActive(false);
       host.replaceChildren();
     };
   }, [book, file.size, readingMode]);
@@ -519,10 +503,9 @@ export function Reader({ file, onClose }: ReaderProps) {
       lineHeight,
       imageScale,
       readingMode,
-      gripMode,
-      Boolean(book && isPrePaginatedBook(book))
+      gripMode
     );
-  }, [book, fontScale, gripMode, imageScale, lineHeight, readingMode, theme]);
+  }, [fontScale, gripMode, imageScale, lineHeight, readingMode, theme]);
 
   useEffect(() => {
     saveReaderPreferences({ fontScale, gripMode, imageScale, lineHeight, theme });
@@ -700,6 +683,92 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
   }
 
+  function turnFromHotzone(side: "left" | "right") {
+    const stage = stageRef.current;
+    if (!stage || imageScale > 100) {
+      return;
+    }
+
+    const bounds = stage.getBoundingClientRect();
+    const direction = getPageClickDirection({
+      readingMode: "page",
+      gripMode,
+      clientX: side === "left" ? bounds.left + 1 : bounds.right - 1,
+      boundsLeft: bounds.left,
+      boundsWidth: bounds.width
+    });
+    if (direction) {
+      void turnPage(direction);
+    }
+  }
+
+  function handleHotzoneTouchStart(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    if (event.touches.length !== 1) {
+      hotzoneTouchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    hotzoneTouchStartRef.current = {
+      side,
+      x: touch.clientX,
+      y: touch.clientY
+    };
+  }
+
+  function handleHotzoneTouchEnd(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    const start = hotzoneTouchStartRef.current;
+    const touch = event.changedTouches[0];
+    hotzoneTouchStartRef.current = null;
+    if (!start || !touch || start.side !== side) {
+      return;
+    }
+
+    const wasTap = isTapGesture({
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY
+    });
+    const swipeDirection = getSwipeDirection({
+      readingMode: "page",
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY
+    });
+    if (!wasTap && !swipeDirection) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    lastHotzoneTouchRef.current = Date.now();
+    if (swipeDirection) {
+      void turnPage(swipeDirection);
+    } else {
+      turnFromHotzone(side);
+    }
+  }
+
+  function handleHotzoneClick(
+    side: "left" | "right",
+    event: React.MouseEvent<HTMLButtonElement>
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - lastHotzoneTouchRef.current < 500) {
+      return;
+    }
+    turnFromHotzone(side);
+  }
+
   const chromeIsVisible =
     !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
 
@@ -744,6 +813,31 @@ export function Reader({ file, onClose }: ReaderProps) {
             </div>
           ) : null}
           <div ref={mountRef} className="rendition-root" />
+          {status === "ready" &&
+          readingMode === "page" &&
+          imageDocumentActive &&
+          imageScale <= 100 ? (
+            <div className="reader-hotzones" aria-label="分页点击区域">
+              <button
+                className="reader-hotzone left"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "下一页" : "上一页"}
+                onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
+                onClick={(event) => handleHotzoneClick("left", event)}
+              />
+              <button
+                className="reader-hotzone right"
+                type="button"
+                tabIndex={-1}
+                aria-label={gripMode === "left" ? "上一页" : "下一页"}
+                onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
+                onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
+                onClick={(event) => handleHotzoneClick("right", event)}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1001,37 +1095,22 @@ function registerContentEnhancements(
   onPageTurn: (direction: PageClickDirection) => void,
   onImageScaleChange: (nextImageScale: number) => void,
   onToggleControls: () => void,
+  onImageDocumentChange: (isImageDocument: boolean) => void,
   lazyResources?: LazyEpubResourceController | null
 ) {
   rendition.hooks.content.register((contents: Contents) => {
-    // Install interaction first. A malformed stylesheet, image, or lazy-load
-    // entry must never leave an otherwise visible page without tap or pinch
-    // controls.
-    try {
-      installContentPointerBehavior(
-        contents,
-        settingsRef,
-        onPageTurn,
-        onImageScaleChange,
-        onToggleControls
-      );
-    } catch {
-      // Keep the EPUB page usable even when a browser exposes an incomplete
-      // iframe event implementation.
-    }
-
-    try {
-      lazyResources?.activateDocument(contents.document);
-    } catch {
-      // A resource can disappear while a continuous view is being recycled.
-    }
-
-    try {
-      applyImageScaleToContent(contents, settingsRef.current);
-    } catch {
-      // Text and navigation remain usable if a particular image page cannot
-      // be measured or styled.
-    }
+    lazyResources?.activateDocument(contents.document);
+    applyImageScaleToContent(contents, settingsRef.current);
+    onImageDocumentChange(
+      contents.document.documentElement.classList.contains("reader-image-document")
+    );
+    installContentPointerBehavior(
+      contents,
+      settingsRef,
+      onPageTurn,
+      onImageScaleChange,
+      onToggleControls
+    );
   });
 }
 
@@ -1118,8 +1197,17 @@ function readCompactViewport(): boolean {
 function registerEarlyImagePageGuard(book: Book) {
   book.spine.hooks.content.register((document: Document) => {
     const root = document.documentElement;
+    const body = document.querySelector("body");
     const head = document.querySelector("head");
-    if (!root || !document.body || !head || !getImagePageInfo(document).isSingleImagePage) {
+    if (!root || !body || !head) {
+      return;
+    }
+
+    const mediaElements = body.querySelectorAll("img, svg");
+    const textProbe = body.cloneNode(true) as Element;
+    textProbe.querySelectorAll("img, svg").forEach((element) => element.remove());
+    const meaningfulText = textProbe.textContent?.replace(/\s+/g, "") ?? "";
+    if (mediaElements.length !== 1 || meaningfulText.length > 0) {
       return;
     }
 
@@ -1159,21 +1247,7 @@ function getOpeningMessage(file: File): string {
 }
 
 function applyImageScaleToRenderedContents(rendition: Rendition, settings: ReaderSettings) {
-  const rendered = getRenderedContents(rendition);
-  const active = new Set(getActiveRenderedContents(rendition, rendered));
-
-  // Apply the visual transform to every already-rendered iframe so a
-  // preloaded next page never appears at the old scale. Only the active view
-  // is allowed to resize its epub-view container; that is the expensive step
-  // that previously caused continuous-scroll jumps and white screens.
-  for (const contents of rendered) {
-    const document = contents.document as ReaderDocument;
-    const imagePageInfo = document.__readerImagePageInfo;
-    if (!imagePageInfo?.isImageDocument && !document.querySelector("img, svg image")) {
-      continue;
-    }
-    applyImageScaleToContent(contents, settings, active.has(contents));
-  }
+  getRenderedContents(rendition).forEach((contents) => applyImageScaleToContent(contents, settings));
 }
 
 function getRenderedContents(rendition: Rendition): Contents[] {
@@ -1189,278 +1263,153 @@ function getRenderedContents(rendition: Rendition): Contents[] {
   }
 }
 
-function getRenditionManagerContainer(rendition: Rendition): HTMLElement | null {
-  return (
-    rendition as unknown as { manager?: { container?: HTMLElement | null } }
-  ).manager?.container ?? null;
-}
-
-/**
- * Continuous mode can keep several neighboring iframe views alive. Resizing
- * all of them at once makes the scroll offset jump and was the main cause of
- * the apparent white screen after changing image scale. Only update the view
- * that currently occupies the reader viewport; preloaded views receive the
- * latest setting from the content hook or the next relocated event.
- */
-function getActiveRenderedContents(
-  rendition: Rendition,
-  rendered: Contents[] = getRenderedContents(rendition)
-): Contents[] {
-  if (rendered.length <= 1) {
-    return rendered;
-  }
-
-  const managerContainer = getRenditionManagerContainer(rendition);
-  const viewportBounds = safeElementBounds(managerContainer ?? null);
-  if (!viewportBounds || viewportBounds.width <= 0 || viewportBounds.height <= 0) {
-    return [rendered[0]];
-  }
-
-  let best: Contents | null = null;
-  let bestVisibleArea = -1;
-  let bestCenterDistance = Number.POSITIVE_INFINITY;
-  const viewportCenterY = viewportBounds.top + viewportBounds.height / 2;
-
-  for (const contents of rendered) {
-    const frame = contents.window.frameElement as HTMLElement | null;
-    const view = frame?.closest?.(".epub-view") as HTMLElement | null;
-    const bounds = safeElementBounds(view ?? frame);
-    if (!bounds) {
-      continue;
-    }
-
-    const intersectionWidth = Math.max(
-      0,
-      Math.min(bounds.right, viewportBounds.right) - Math.max(bounds.left, viewportBounds.left)
-    );
-    const intersectionHeight = Math.max(
-      0,
-      Math.min(bounds.bottom, viewportBounds.bottom) - Math.max(bounds.top, viewportBounds.top)
-    );
-    const visibleArea = intersectionWidth * intersectionHeight;
-    const centerDistance = Math.abs(bounds.top + bounds.height / 2 - viewportCenterY);
-
-    if (
-      visibleArea > bestVisibleArea ||
-      (visibleArea === bestVisibleArea && centerDistance < bestCenterDistance)
-    ) {
-      best = contents;
-      bestVisibleArea = visibleArea;
-      bestCenterDistance = centerDistance;
-    }
-  }
-
-  return [best ?? rendered[0]];
-}
-
-type ImageScaleAnchor = {
-  innerXRatio: number;
-  innerYRatio: number;
-  outerContainer: HTMLElement | null;
-  outerView: HTMLElement | null;
-  outerViewRatio: number | null;
-};
-
 function applyImageScaleToContent(
   contents: Contents,
   settings: ReaderSettings,
-  syncHeight = true,
-  anchorOverride: ImageScaleAnchor | null = null
+  syncHeight = true
 ) {
-  const doc = contents.document as ReaderDocument;
-  const hadAppliedSetting = doc.__readerAppliedImageScale !== undefined;
-  const settingChanged =
-    !hadAppliedSetting ||
-    doc.__readerAppliedImageScale !== settings.imageScale ||
-    doc.__readerAppliedReadingMode !== settings.readingMode;
-  const candidateAnchor =
-    anchorOverride ??
-    (hadAppliedSetting && settingChanged && syncHeight
-      ? captureImageScaleAnchor(contents)
-      : null);
-  const markedPage = markImagePage(
+  const effectiveImageScale = settings.imageScale;
+  const isSingleImagePage = markSingleImagePage(
     contents,
-    settings.imageScale,
-    settings.readingMode,
-    settings.fixedLayout
+    effectiveImageScale,
+    settings.readingMode
   );
-  const needsHeightRefresh =
-    syncHeight &&
-    (doc.__readerImageHeightScale !== settings.imageScale ||
-      doc.__readerImageHeightMode !== settings.readingMode);
-  const needsRefresh = settingChanged || markedPage.changed || needsHeightRefresh;
-
-  if (!needsRefresh) {
-    return;
-  }
-
   applyContentStylesheet(
     contents,
-    getImageScaleStylesheet(settings.imageScale),
+    getImageScaleStylesheet(effectiveImageScale),
     "reader-image-scale"
   );
-  doc.__readerAppliedImageScale = settings.imageScale;
-  doc.__readerAppliedReadingMode = settings.readingMode;
-
   if (syncHeight) {
     syncSingleImageViewHeight(
       contents,
       settings.readingMode,
-      markedPage.pageInfo,
-      settings.imageScale,
-      settings.fixedLayout,
-      candidateAnchor
+      isSingleImagePage,
+      effectiveImageScale
     );
-  } else if (candidateAnchor) {
-    scheduleImageScaleAnchorRestore(contents, candidateAnchor);
   }
 }
 
-type MarkedImagePage = {
-  pageInfo: ImagePageInfo;
-  changed: boolean;
-};
-
-function getCachedImagePageInfo(document: ReaderDocument): ImagePageInfo {
-  const cached = document.__readerImagePageInfo;
-  if (cached) {
-    return cached;
-  }
-
-  const pageInfo = getImagePageInfo(document);
-  document.__readerImagePageInfo = pageInfo;
-  return pageInfo;
-}
-
-function markImagePage(
+function markSingleImagePage(
   contents: Contents,
   imageScale: number,
-  readingMode: ReadingMode,
-  fixedLayout: boolean
-): MarkedImagePage {
-  const doc = contents.document as ReaderDocument;
-  const pageInfo = getCachedImagePageInfo(doc);
-  const root = doc.documentElement;
-  const previousImageDocument = root.classList.contains("reader-image-document");
-  const previousImagePage = root.classList.contains("reader-image-page");
-  const previousScrollMode = root.classList.contains("reader-scroll-mode");
-  const previousPageMode = root.classList.contains("reader-page-mode");
+  readingMode: ReadingMode
+): boolean {
+  const doc = contents.document;
+  const body = doc.body;
+  if (!body) {
+    return false;
+  }
 
-  root.classList.toggle("reader-image-document", pageInfo.isImageDocument);
-  root.classList.toggle("reader-image-page", pageInfo.isSingleImagePage);
-  root.classList.toggle("reader-scroll-mode", readingMode === "scroll");
-  root.classList.toggle("reader-page-mode", readingMode === "page");
-  const scaleResult = applyImagePageScale(doc, pageInfo, imageScale, fixedLayout);
+  const images = body.querySelectorAll("img");
+  const svgImages = body.querySelectorAll("svg image");
+  const mediaCount = images.length + svgImages.length;
+  const textProbe = body.cloneNode(true) as Element;
+  textProbe
+    .querySelectorAll("img, picture, source, svg, style, script, noscript")
+    .forEach((element) => element.remove());
+  const meaningfulText = textProbe.textContent?.replace(/\s+/g, "") ?? "";
+  const isImageDocument =
+    mediaCount > 0 && meaningfulText.length <= Math.max(48, mediaCount * 12);
+  const isSingleImagePage = mediaCount === 1 && isImageDocument && images.length === 1;
+  doc.documentElement.classList.toggle("reader-image-document", isImageDocument);
+  doc.documentElement.classList.toggle("reader-image-page", isSingleImagePage);
+  doc.documentElement.classList.toggle("reader-scroll-mode", readingMode === "scroll");
+  doc.documentElement.classList.toggle("reader-page-mode", readingMode === "page");
 
-  return {
-    pageInfo,
-    changed:
-      scaleResult.changed ||
-      previousImageDocument !== pageInfo.isImageDocument ||
-      previousImagePage !== pageInfo.isSingleImagePage ||
-      previousScrollMode !== (readingMode === "scroll") ||
-      previousPageMode !== (readingMode === "page")
-  };
+  if (!isSingleImagePage) {
+    doc.documentElement.style.removeProperty("--reader-fixed-layout-width");
+    return false;
+  }
+
+  updateSingleImagePageWidth(contents, images[0], imageScale);
+  return true;
+}
+
+function updateSingleImagePageWidth(contents: Contents, image: HTMLImageElement, imageScale: number) {
+  const viewportContent = contents.document
+    .querySelector("meta[name='viewport']")
+    ?.getAttribute("content");
+  const scaledWidth = getScaledFixedLayoutWidth(
+    viewportContent,
+    image.naturalWidth > 1 ? image.naturalWidth : null,
+    imageScale
+  );
+  contents.document.documentElement.style.setProperty(
+    "--reader-fixed-layout-width",
+    scaledWidth ? `${scaledWidth}px` : `${Math.min(400, Math.max(100, Math.round(imageScale)))}%`
+  );
 }
 
 function syncSingleImageViewHeight(
   contents: Contents,
   readingMode: ReadingMode,
-  pageInfo: ImagePageInfo,
-  imageScale: number,
-  fixedLayout: boolean,
-  anchorOverride: ImageScaleAnchor | null
+  isSingleImagePage: boolean,
+  imageScale: number
 ) {
+  if (!isSingleImagePage) {
+    return;
+  }
+
   const doc = contents.document as ReaderDocument;
   doc.__readerImageHeightCleanup?.();
-  doc.__readerImageHeightCleanup = undefined;
-
-  if (!pageInfo.isSingleImagePage || !pageInfo.media) {
-    doc.__readerImageHeightScale = undefined;
-    doc.__readerImageHeightMode = undefined;
-    if (anchorOverride) {
-      scheduleImageScaleAnchorRestore(contents, anchorOverride);
-    }
-    return;
-  }
 
   const frameElement = contents.window.frameElement as HTMLIFrameElement | null;
-  const viewElement = frameElement?.closest?.(".epub-view") as HTMLElement | null;
-  if (!frameElement || !viewElement) {
-    if (anchorOverride) {
-      scheduleImageScaleAnchorRestore(contents, anchorOverride);
-    }
+  const viewElement = frameElement?.closest(".epub-view") as HTMLElement | null;
+  const image = doc.querySelector("img");
+  if (!frameElement || !viewElement || !image) {
     return;
   }
 
-  const media = pageInfo.media;
-  let firstAnchor = anchorOverride;
-
   const applyHeight = () => {
-    // Natural image decode/ResizeObserver updates must never reposition the
-    // continuous manager. Only an explicit scale change supplies an anchor.
-    const anchor = firstAnchor;
-    firstAnchor = null;
-
-    // epub.js can recalculate its fit-to-frame body transform after a resize.
-    // Reapply the reader zoom before measuring the visible media rectangle.
-    applyImagePageScale(doc, pageInfo, imageScale, fixedLayout);
-
-    const parentBounds = safeElementBounds(viewElement.parentElement);
-    const viewBounds = safeElementBounds(viewElement);
-    const frameBounds = safeElementBounds(frameElement);
-    const pageHeight =
-      parentBounds?.height || viewBounds?.height || contents.window.innerHeight || 1;
+    updateSingleImagePageWidth(contents, image, imageScale);
+    const imageHeight = image.getBoundingClientRect().height;
+    const parentBounds = viewElement.parentElement?.getBoundingClientRect();
+    const viewBounds = viewElement.getBoundingClientRect();
+    const frameBounds = frameElement.getBoundingClientRect();
+    const pageHeight = parentBounds?.height || viewBounds.height || contents.window.innerHeight;
     const frameWidth =
-      frameBounds?.width ||
-      parentBounds?.width ||
-      viewBounds?.width ||
-      contents.window.innerWidth ||
-      1;
+      frameBounds.width || parentBounds?.width || viewBounds.width || contents.window.innerWidth;
     const viewportContent = doc
       .querySelector("meta[name='viewport']")
       ?.getAttribute("content");
-    const measuredHeight = getImagePageDisplayHeight(media);
-    const estimatedHeight = getEstimatedSingleImageHeight({
+    const estimatedImageHeight = getEstimatedSingleImageHeight({
       viewportContent,
-      naturalWidth: media.intrinsicWidth,
-      naturalHeight: media.intrinsicHeight,
-      attributeWidth: media.intrinsicWidth,
-      attributeHeight: media.intrinsicHeight,
+      naturalWidth: image.naturalWidth > 1 ? image.naturalWidth : null,
+      naturalHeight: image.naturalHeight > 1 ? image.naturalHeight : null,
+      attributeWidth: Number(image.getAttribute("width")),
+      attributeHeight: Number(image.getAttribute("height")),
       frameWidth,
       imageScale,
       fallbackHeight: pageHeight
     });
-    const stableImageHeight =
-      measuredHeight > 1 ? measuredHeight : estimatedHeight ?? Math.max(1, pageHeight);
-    const targetHeight =
-      getPageImageFrameHeight(readingMode, true, pageHeight) ??
-      getScrollImagePageViewHeight(readingMode, true, stableImageHeight);
+    const stableImageHeight = imageHeight > 1 ? imageHeight : estimatedImageHeight ?? pageHeight;
+    const pageFrameHeight = getPageImageFrameHeight(readingMode, true, pageHeight);
+    const scrollViewHeight = getScrollImagePageViewHeight(
+      readingMode,
+      true,
+      stableImageHeight
+    );
+    const targetHeight = pageFrameHeight ?? scrollViewHeight;
 
-    if (targetHeight && Number.isFinite(targetHeight)) {
-      const height = `${Math.max(1, Math.ceil(targetHeight))}px`;
-      frameElement.style.setProperty("height", height);
-      viewElement.style.setProperty("height", height);
+    if (!targetHeight) {
+      return;
     }
 
-    if (anchor) {
-      scheduleImageScaleAnchorRestore(contents, anchor);
-    }
+    const height = `${targetHeight}px`;
+    frameElement.style.setProperty("height", height);
+    viewElement.style.setProperty("height", height);
   };
 
-  // Set a non-zero height before the continuous manager runs fill(). Image
-  // decode and ResizeObserver refine it without loading every neighboring page.
+  // Set a non-zero placeholder synchronously, before epub.js continuous fill()
+  // measures the view. The next frame and image load refine it with real data.
   applyHeight();
-  doc.__readerImageHeightScale = imageScale;
-  doc.__readerImageHeightMode = readingMode;
   let animationFrame = contents.window.requestAnimationFrame(applyHeight);
   const scheduleHeight = () => {
     contents.window.cancelAnimationFrame(animationFrame);
     animationFrame = contents.window.requestAnimationFrame(applyHeight);
   };
 
-  const loadTarget = getImagePageLoadTarget(media);
-  loadTarget.addEventListener("load", scheduleHeight);
+  image.addEventListener("load", scheduleHeight);
   contents.window.addEventListener("resize", scheduleHeight);
 
   let resizeObserver: ResizeObserver | null = null;
@@ -1468,147 +1417,35 @@ function syncSingleImageViewHeight(
     contents.window as unknown as { ResizeObserver?: typeof ResizeObserver }
   ).ResizeObserver;
   if (typeof ResizeObserverCtor === "function") {
-    resizeObserver = new ResizeObserverCtor(scheduleHeight);
-    resizeObserver.observe(media.displayElement);
+    const observer = new ResizeObserverCtor(scheduleHeight);
+    observer.observe(image);
+    resizeObserver = observer;
   }
 
-  const decode = (loadTarget as { decode?: () => Promise<unknown> }).decode;
-  if (typeof decode === "function") {
-    void decode.call(loadTarget).then(scheduleHeight).catch(() => {});
+  if (typeof image.decode === "function") {
+    void image.decode().then(scheduleHeight).catch(() => {});
   }
 
   doc.__readerImageHeightCleanup = () => {
     contents.window.cancelAnimationFrame(animationFrame);
-    loadTarget.removeEventListener("load", scheduleHeight);
+    image.removeEventListener("load", scheduleHeight);
     contents.window.removeEventListener("resize", scheduleHeight);
     resizeObserver?.disconnect();
   };
 }
 
-function previewImageScale(
-  contents: Contents,
-  imageScale: number,
-  fixedLayout: boolean,
-  readingMode: ReadingMode
-) {
-  markImagePage(contents, imageScale, readingMode, fixedLayout);
-}
-
-function captureImageScaleAnchor(contents: Contents): ImageScaleAnchor {
-  const doc = contents.document;
-  const root = doc.documentElement;
-  const body = doc.body;
-  const viewportWidth = contents.window.innerWidth || root.clientWidth || 1;
-  const viewportHeight = contents.window.innerHeight || root.clientHeight || 1;
-  const scrollWidth = Math.max(viewportWidth, root.scrollWidth);
-  const scrollHeight = Math.max(viewportHeight, root.scrollHeight);
-  const scrollLeft = getDocumentScrollLeft(contents.window, root, body);
-  const scrollTop = getDocumentScrollTop(contents.window, root, body);
-  const frame = contents.window.frameElement as HTMLElement | null;
-  const view = frame?.closest?.(".epub-view") as HTMLElement | null;
-  const container = view?.closest?.(".epub-container") as HTMLElement | null;
-  const viewBounds = safeElementBounds(view);
-  const containerBounds = safeElementBounds(container);
-  let outerViewRatio: number | null = null;
-
-  if (viewBounds && containerBounds && viewBounds.height > 0) {
-    const containerHeight = container?.clientHeight || containerBounds.height;
-    const viewportCenter = containerBounds.top + Math.min(containerBounds.height, containerHeight) / 2;
-    outerViewRatio = clampRatio((viewportCenter - viewBounds.top) / viewBounds.height);
+function previewImageScale(contents: Contents, imageScale: number) {
+  const root = contents.document.documentElement;
+  const image = contents.document.querySelector("img");
+  if (root.classList.contains("reader-image-page") && image) {
+    updateSingleImagePageWidth(contents, image, imageScale);
+    return;
   }
 
-  return {
-    innerXRatio: clampRatio((scrollLeft + viewportWidth / 2) / scrollWidth),
-    innerYRatio: clampRatio((scrollTop + viewportHeight / 2) / scrollHeight),
-    outerContainer: container,
-    outerView: view,
-    outerViewRatio
-  };
-}
-
-function scheduleImageScaleAnchorRestore(contents: Contents, anchor: ImageScaleAnchor) {
-  const document = contents.document as ReaderDocument;
-  const revision = (document.__readerAnchorRestoreRevision ?? 0) + 1;
-  document.__readerAnchorRestoreRevision = revision;
-  const restoreIfCurrent = () => {
-    if (document.__readerAnchorRestoreRevision === revision) {
-      restoreImageScaleAnchor(contents, anchor);
-    }
-  };
-
-  restoreIfCurrent();
-  contents.window.requestAnimationFrame(restoreIfCurrent);
-  // epub.js and WebKit can apply one more iframe/view measurement after the
-  // first animation frame. Reassert the latest anchor once after layout settles.
-  contents.window.setTimeout(restoreIfCurrent, 80);
-}
-
-function restoreImageScaleAnchor(contents: Contents, anchor: ImageScaleAnchor) {
-  const doc = contents.document;
-  const root = doc.documentElement;
-  const body = doc.body;
-  const viewportWidth = contents.window.innerWidth || root.clientWidth || 1;
-  const viewportHeight = contents.window.innerHeight || root.clientHeight || 1;
-  const scrollWidth = Math.max(viewportWidth, root.scrollWidth);
-  const scrollHeight = Math.max(viewportHeight, root.scrollHeight);
-  const left = Math.max(0, anchor.innerXRatio * scrollWidth - viewportWidth / 2);
-  const top = Math.max(0, anchor.innerYRatio * scrollHeight - viewportHeight / 2);
-
-  try {
-    contents.window.scrollTo({ left, top, behavior: "auto" });
-  } catch {
-    // Direct element scrolling below is the compatibility fallback.
-  }
-  root.scrollLeft = left;
-  root.scrollTop = top;
-  if (body) {
-    body.scrollLeft = left;
-    body.scrollTop = top;
-  }
-
-  if (anchor.outerContainer && anchor.outerView && anchor.outerViewRatio !== null) {
-    const containerBounds = safeElementBounds(anchor.outerContainer);
-    const viewBounds = safeElementBounds(anchor.outerView);
-    if (containerBounds && viewBounds && viewBounds.height > 0) {
-      const containerHeight = anchor.outerContainer.clientHeight || containerBounds.height;
-      const viewportCenter =
-        containerBounds.top + Math.min(containerBounds.height, containerHeight) / 2;
-      const anchoredPoint = viewBounds.top + viewBounds.height * anchor.outerViewRatio;
-      anchor.outerContainer.scrollTop += anchoredPoint - viewportCenter;
-    }
-  }
-}
-
-function getDocumentScrollLeft(
-  contentWindow: Window,
-  root: HTMLElement,
-  body: HTMLElement | null
-): number {
-  return contentWindow.scrollX || root.scrollLeft || body?.scrollLeft || 0;
-}
-
-function getDocumentScrollTop(
-  contentWindow: Window,
-  root: HTMLElement,
-  body: HTMLElement | null
-): number {
-  return contentWindow.scrollY || root.scrollTop || body?.scrollTop || 0;
-}
-
-function safeElementBounds(element: Element | null): DOMRect | null {
-  if (!element) {
-    return null;
-  }
-
-  try {
-    return element.getBoundingClientRect();
-  } catch {
-    return null;
-  }
-}
-
-function clampRatio(value: number): number {
-  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5;
+  root.style.setProperty(
+    "--reader-fixed-layout-width",
+    `${Math.min(400, Math.max(100, Math.round(imageScale)))}%`
+  );
 }
 
 function installContentPointerBehavior(
@@ -1630,18 +1467,10 @@ function installContentPointerBehavior(
   let lastY = 0;
   let touchStart: { x: number; y: number; startedOnImage: boolean } | null = null;
   let pinchStart: { distance: number; imageScale: number } | null = null;
-  let pinchAnchor: ImageScaleAnchor | null = null;
-  let pinchInputSource: "touch" | "gesture" | null = null;
   let pinchPreviewScale: number | null = null;
   let pinchAnimationFrame: number | null = null;
-  let safariGestureStartScale: number | null = null;
-  let safariGestureAnchor: ImageScaleAnchor | null = null;
   let suppressNextClick = false;
   const touchListenerOptions = { capture: true, passive: false } as const;
-
-  const isImageDocument = () =>
-    doc.documentElement.classList.contains("reader-image-document") ||
-    getCachedImagePageInfo(doc).isImageDocument;
 
   const turnFromClientX = (clientX: number) => {
     const direction = getPageClickDirection({
@@ -1671,57 +1500,7 @@ function installContentPointerBehavior(
         return;
       }
 
-      previewImageScale(
-        contents,
-        pinchPreviewScale,
-        settingsRef.current.fixedLayout,
-        settingsRef.current.readingMode
-      );
-    });
-  };
-
-  const commitPinchScale = (nextImageScale: number, anchor: ImageScaleAnchor | null) => {
-    if (pinchAnimationFrame !== null) {
-      contents.window.cancelAnimationFrame(pinchAnimationFrame);
-      pinchAnimationFrame = null;
-    }
-    pinchPreviewScale = null;
-    pinchStart = null;
-    pinchAnchor = null;
-    pinchInputSource = null;
-    safariGestureStartScale = null;
-    safariGestureAnchor = null;
-    touchStart = null;
-
-    settingsRef.current = { ...settingsRef.current, imageScale: nextImageScale };
-    applyImageScaleToContent(contents, settingsRef.current, true, anchor);
-    onImageScaleChange(nextImageScale);
-    suppressNextClick = true;
-    contents.window.setTimeout(() => {
-      suppressNextClick = false;
-    }, 600);
-  };
-
-  const cancelPinchPreview = () => {
-    if (pinchAnimationFrame !== null) {
-      contents.window.cancelAnimationFrame(pinchAnimationFrame);
-      pinchAnimationFrame = null;
-    }
-    previewImageScale(
-      contents,
-      settingsRef.current.imageScale,
-      settingsRef.current.fixedLayout,
-      settingsRef.current.readingMode
-    );
-    pinchStart = null;
-    pinchAnchor = null;
-    pinchInputSource = null;
-    pinchPreviewScale = null;
-    safariGestureStartScale = null;
-    safariGestureAnchor = null;
-    suppressNextClick = true;
-    suppressClickTemporarily(contents, () => {
-      suppressNextClick = false;
+      previewImageScale(contents, pinchPreviewScale);
     });
   };
 
@@ -1770,16 +1549,15 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchstart",
     (event) => {
-      if (event.touches.length === 2 && isImageDocument()) {
+      const isImageDocument =
+        doc.documentElement.classList.contains("reader-image-document") ||
+        Boolean(doc.querySelector("img, svg image"));
+      if (event.touches.length === 2 && isImageDocument) {
         pinchStart = {
           distance: getTouchDistance(event.touches[0], event.touches[1]),
           imageScale: settingsRef.current.imageScale
         };
-        pinchAnchor = captureImageScaleAnchor(contents);
-        pinchInputSource = "touch";
         pinchPreviewScale = settingsRef.current.imageScale;
-        safariGestureStartScale = null;
-        safariGestureAnchor = null;
         touchStart = null;
         suppressNextClick = true;
         event.preventDefault();
@@ -1805,7 +1583,7 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchmove",
     (event) => {
-      if (pinchInputSource === "touch" && pinchStart && event.touches.length === 2) {
+      if (pinchStart && event.touches.length === 2) {
         const nextImageScale = getPinchImageScale({
           startScale: pinchStart.imageScale,
           startDistance: pinchStart.distance,
@@ -1839,21 +1617,23 @@ function installContentPointerBehavior(
   doc.addEventListener(
     "touchend",
     (event) => {
-      // Safari can begin with Touch Events and then switch to its native
-      // gesture events. Once gesturestart takes over, touchend must not commit
-      // the unchanged 100% touch preview before gesturechange is processed.
-      if (pinchInputSource === "gesture") {
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      if (pinchInputSource === "touch" && pinchStart) {
+      if (pinchStart) {
         if (event.touches.length < 2) {
-          commitPinchScale(
-            pinchPreviewScale ?? settingsRef.current.imageScale,
-            pinchAnchor
-          );
+          const committedScale = pinchPreviewScale ?? settingsRef.current.imageScale;
+          pinchStart = null;
+          pinchPreviewScale = null;
+          touchStart = null;
+          if (pinchAnimationFrame !== null) {
+            contents.window.cancelAnimationFrame(pinchAnimationFrame);
+            pinchAnimationFrame = null;
+          }
+          settingsRef.current = { ...settingsRef.current, imageScale: committedScale };
+          applyImageScaleToContent(contents, settingsRef.current);
+          onImageScaleChange(committedScale);
+          suppressNextClick = true;
+          contents.window.setTimeout(() => {
+            suppressNextClick = false;
+          }, 600);
         }
         event.preventDefault();
         event.stopPropagation();
@@ -1947,81 +1727,6 @@ function installContentPointerBehavior(
     },
     touchListenerOptions
   );
-
-  doc.addEventListener(
-    "touchcancel",
-    () => {
-      touchStart = null;
-      if (pinchInputSource === "touch" && pinchStart) {
-        cancelPinchPreview();
-      }
-    },
-    touchListenerOptions
-  );
-
-  // iOS Safari and some WKWebView builds start with a two-touch touchstart,
-  // then deliver the actual scale changes only through gesturechange. Let the
-  // gesture stream take ownership instead of ignoring it because pinchStart is
-  // already populated; the old behavior made 100% pages appear unzoomable.
-  type SafariGestureEvent = Event & { scale?: number };
-  const handleGestureStart = (rawEvent: Event) => {
-    const event = rawEvent as SafariGestureEvent;
-    if (!isImageDocument()) {
-      return;
-    }
-
-    if (pinchAnimationFrame !== null) {
-      contents.window.cancelAnimationFrame(pinchAnimationFrame);
-      pinchAnimationFrame = null;
-    }
-
-    safariGestureStartScale = pinchStart?.imageScale ?? settingsRef.current.imageScale;
-    safariGestureAnchor = pinchAnchor ?? captureImageScaleAnchor(contents);
-    pinchInputSource = "gesture";
-    pinchStart = null;
-    pinchAnchor = null;
-    pinchPreviewScale = safariGestureStartScale;
-    touchStart = null;
-    suppressNextClick = true;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-  const handleGestureChange = (rawEvent: Event) => {
-    const event = rawEvent as SafariGestureEvent;
-    if (pinchInputSource !== "gesture" || safariGestureStartScale === null) {
-      return;
-    }
-    const scale = typeof event.scale === "number" && Number.isFinite(event.scale) ? event.scale : 1;
-    schedulePinchPreview(
-      getPinchImageScale({
-        startScale: safariGestureStartScale,
-        startDistance: 1,
-        currentDistance: scale
-      })
-    );
-    event.preventDefault();
-    event.stopPropagation();
-  };
-  const handleGestureEnd = (rawEvent: Event) => {
-    const event = rawEvent as SafariGestureEvent;
-    if (pinchInputSource !== "gesture" || safariGestureStartScale === null) {
-      return;
-    }
-    const finalScale =
-      typeof event.scale === "number" && Number.isFinite(event.scale)
-        ? getPinchImageScale({
-            startScale: safariGestureStartScale,
-            startDistance: 1,
-            currentDistance: event.scale
-          })
-        : pinchPreviewScale ?? settingsRef.current.imageScale;
-    commitPinchScale(finalScale, safariGestureAnchor);
-    event.preventDefault();
-    event.stopPropagation();
-  };
-  doc.addEventListener("gesturestart", handleGestureStart as EventListener, touchListenerOptions);
-  doc.addEventListener("gesturechange", handleGestureChange as EventListener, touchListenerOptions);
-  doc.addEventListener("gestureend", handleGestureEnd as EventListener, touchListenerOptions);
 
   doc.addEventListener(
     "click",
@@ -2154,8 +1859,7 @@ function applyReaderStyle(
   lineHeight: number,
   imageScale: number,
   readingMode: ReadingMode,
-  gripMode: GripMode,
-  fixedLayout: boolean
+  gripMode: GripMode
 ) {
   rendition.themes.select(theme);
   rendition.themes.fontSize(`${fontScale}%`);
@@ -2166,7 +1870,6 @@ function applyReaderStyle(
     imageScale,
     lineHeight,
     readingMode,
-    theme,
-    fixedLayout
+    theme
   });
 }

@@ -8,6 +8,7 @@ import {
   getPageClickDirection,
   getProgressPercent,
   getScrollImagePageViewHeight,
+  getScaledFixedLayoutWidth,
   getSwipeDirection,
   getToolbarPageControls,
   getTouchDistance,
@@ -114,11 +115,9 @@ describe("getImageScaleStylesheet", () => {
     const stylesheet = getImageScaleStylesheet(175);
 
     expect(stylesheet).toContain("html.reader-image-document");
-    expect(stylesheet).toContain("--reader-image-scale: 175%");
-    expect(stylesheet).toContain("html.reader-image-document.reader-fixed-layout-page body");
-    expect(stylesheet).toContain("transform-origin: 0 0 !important");
-    expect(stylesheet).toContain("html.reader-image-document:not(.reader-fixed-layout-page) img");
-    expect(stylesheet).toContain("width: var(--reader-image-scale, 175%) !important");
+    expect(stylesheet).toContain("width: var(--reader-fixed-layout-width, 175%)");
+    expect(stylesheet).toContain("html.reader-image-document img");
+    expect(stylesheet).toContain("width: 100% !important");
     expect(stylesheet).not.toMatch(/(^|\n)\s*html, body/);
     expect(stylesheet).not.toMatch(/(^|\n)\s*img\s*\{/);
   });
@@ -155,6 +154,19 @@ describe("getEstimatedSingleImageHeight", () => {
   });
 });
 
+describe("getScaledFixedLayoutWidth", () => {
+  it("scales from the fixed-layout viewport width instead of the iframe width", () => {
+    expect(getScaledFixedLayoutWidth("width=1920,height=2560", undefined, 175)).toBe(3360);
+  });
+
+  it("falls back to the image natural width when viewport metadata has no width", () => {
+    expect(getScaledFixedLayoutWidth("height=2560", 1200, 150)).toBe(1800);
+  });
+
+  it("allows pinch zoom up to 400 percent", () => {
+    expect(getScaledFixedLayoutWidth("width=1920,height=2560", undefined, 400)).toBe(7680);
+  });
+});
 
 describe("single-image frame sizing", () => {
   it("uses the enlarged image height only for single-image scroll pages", () => {

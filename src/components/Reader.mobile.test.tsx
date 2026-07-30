@@ -71,19 +71,12 @@ import { createBookKey } from "../lib/storage";
 
 const LARGE_FILE_SIZE = 33 * 1024 * 1024;
 
-function createImageContents({ svg = false }: { svg?: boolean } = {}) {
+function createImageContents() {
   const imageDocument = document.implementation.createHTMLDocument("comic-page");
-  imageDocument.head.innerHTML = '<meta name="viewport" content="width=1088,height=1536" />';
-  imageDocument.body.style.width = "1088px";
-  imageDocument.body.style.height = "1536px";
-  imageDocument.body.style.transform = "scale(0.35)";
-  imageDocument.body.innerHTML = svg
-    ? `
-      <svg viewBox="0 0 1088 1536" xmlns="http://www.w3.org/2000/svg">
-        <image href="page-1.jpg" width="1088" height="1536" />
-      </svg>
-    `
-    : '<img src="page-1.jpg" width="1088" height="1536" />';
+  imageDocument.body.innerHTML = `
+    <img src="page-1.jpg" width="1200" height="1800" />
+    <img src="page-2.jpg" width="1200" height="1800" />
+  `;
 
   return {
     document: imageDocument,
@@ -106,41 +99,13 @@ function createTestFile(name: string, lastModified: number) {
   return { file, arrayBuffer };
 }
 
-function dispatchTouchEvent(
-  target: Element,
-  type: "touchstart" | "touchmove" | "touchend",
-  touches: Array<{ clientX: number; clientY: number }>,
-  changedTouches = touches
-) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, "touches", { configurable: true, value: touches });
-  Object.defineProperty(event, "changedTouches", {
-    configurable: true,
-    value: changedTouches
-  });
-  target.dispatchEvent(event);
-}
-
-function dispatchGestureEvent(
-  target: Element,
-  type: "gesturestart" | "gesturechange" | "gestureend",
-  scale: number
-) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, "scale", { configurable: true, value: scale });
-  target.dispatchEvent(event);
-}
-
 describe("Reader mobile scroll controls", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
     mocks.rendition.manager.container = document.createElement("div");
     mocks.book.replacements = vi.fn(async () => undefined);
-    mocks.book.package.metadata.layout = "";
-    mocks.book.displayOptions.fixedLayout = "false";
     mocks.rendition.getContents.mockReturnValue([]);
-    Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -189,35 +154,6 @@ describe("Reader mobile scroll controls", () => {
       "aria-hidden",
       "false"
     );
-  });
-
-  it("does not re-run image sizing on every natural continuous scroll", async () => {
-    const { file } = createTestFile("scroll-comic.epub", 8);
-    mocks.book.package.metadata.layout = "pre-paginated";
-    mocks.book.displayOptions.fixedLayout = "true";
-    const contents = createImageContents();
-    mocks.rendition.getContents.mockReturnValue([contents]);
-
-    render(<Reader file={file} onClose={() => {}} />);
-    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-
-    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
-      | undefined;
-    act(() => contentHook?.(contents));
-
-    const readerDocument = contents.document as Document & {
-      __readerImageHeightScale?: number;
-    };
-    readerDocument.__readerImageHeightScale = undefined;
-    const stylesheetCalls = contents.addStylesheetCss.mock.calls.length;
-
-    await act(async () => {
-      fireEvent.scroll(mocks.rendition.manager.container as HTMLElement);
-      await new Promise((resolve) => window.setTimeout(resolve, 30));
-    });
-
-    expect(contents.addStylesheetCss).toHaveBeenCalledTimes(stylesheetCalls);
   });
 
   it("opens a large scroll book without making an extra ArrayBuffer copy", async () => {
@@ -296,7 +232,7 @@ describe("Reader mobile scroll controls", () => {
     });
   });
 
-  it("routes page taps inside the EPUB iframe without transparent outer hotzones", async () => {
+  it("restores reliable left and right page tap zones in paginated mode", async () => {
     const { file } = createTestFile("comic.epub", 3);
     localStorage.setItem(
       `epub-reader-progress-v2:${createBookKey(file)}`,
@@ -311,130 +247,51 @@ describe("Reader mobile scroll controls", () => {
     const { container } = render(<Reader file={file} onClose={() => {}} />);
     await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
 
-    const contents = createImageContents();
     const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
+      | ((contents: ReturnType<typeof createImageContents>) => void)
       | undefined;
     expect(contentHook).toBeTypeOf("function");
-    act(() => contentHook?.(contents));
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
 
-    expect(container.querySelector(".reader-hotzone")).not.toBeInTheDocument();
-    const image = contents.document.querySelector("img") as HTMLImageElement;
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 390,
+        bottom: 844,
+        left: 0,
+        width: 390,
+        height: 844,
+        toJSON: () => ({})
+      })
+    });
 
-    dispatchTouchEvent(image, "touchstart", [{ clientX: 1000, clientY: 400 }]);
-    dispatchTouchEvent(image, "touchend", [], [{ clientX: 1000, clientY: 400 }]);
+    const leftZone = container.querySelector(".reader-hotzone.left") as HTMLButtonElement;
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    expect(leftZone).toBeInTheDocument();
+    expect(rightZone).toBeInTheDocument();
+
+    fireEvent.touchStart(rightZone, {
+      touches: [{ clientX: 389, clientY: 400 }]
+    });
+    fireEvent.touchEnd(rightZone, {
+      changedTouches: [{ clientX: 389, clientY: 400 }]
+    });
     await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
 
     await new Promise((resolve) => window.setTimeout(resolve, 200));
-    dispatchTouchEvent(image, "touchstart", [{ clientX: 1, clientY: 400 }]);
-    dispatchTouchEvent(image, "touchend", [], [{ clientX: 1, clientY: 400 }]);
+    fireEvent.touchStart(leftZone, {
+      touches: [{ clientX: 1, clientY: 400 }]
+    });
+    fireEvent.touchEnd(leftZone, {
+      changedTouches: [{ clientX: 1, clientY: 400 }]
+    });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
-  });
-
-  it("pinch-zooms a fixed-layout image and keeps the reader visible", async () => {
-    const { file } = createTestFile("fixed-layout-comic.epub", 6);
-    mocks.book.package.metadata.layout = "pre-paginated";
-    mocks.book.displayOptions.fixedLayout = "true";
-    const contents = createImageContents();
-    mocks.rendition.getContents.mockReturnValue([contents]);
-
-    render(<Reader file={file} onClose={() => {}} />);
-    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
-      | undefined;
-    act(() => contentHook?.(contents));
-
-    const image = contents.document.querySelector("img") as HTMLImageElement;
-    await act(async () => {
-      dispatchTouchEvent(
-        image,
-        "touchstart",
-        [
-          { clientX: 100, clientY: 300 },
-          { clientX: 200, clientY: 300 }
-        ]
-      );
-      dispatchTouchEvent(
-        image,
-        "touchmove",
-        [
-          { clientX: 50, clientY: 300 },
-          { clientX: 250, clientY: 300 }
-        ]
-      );
-      dispatchTouchEvent(image, "touchend", [], []);
-      await Promise.resolve();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("EPUB 阅读器")).toBeInTheDocument();
-      expect(contents.document.body.style.transform).toBe("scale(0.35) scale(2)");
-    });
-  });
-
-  it("lets Safari gesture events take over a 100% touch pinch", async () => {
-    const { file } = createTestFile("safari-fixed-layout-comic.epub", 9);
-    localStorage.setItem(
-      `epub-reader-progress-v2:${createBookKey(file)}`,
-      JSON.stringify({
-        cfi: null,
-        percentage: null,
-        readingMode: "page",
-        updatedAt: Date.now()
-      })
-    );
-    mocks.book.package.metadata.layout = "pre-paginated";
-    mocks.book.displayOptions.fixedLayout = "true";
-    const contents = createImageContents();
-    mocks.rendition.getContents.mockReturnValue([contents]);
-
-    render(<Reader file={file} onClose={() => {}} />);
-    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
-      | undefined;
-    act(() => contentHook?.(contents));
-
-    const image = contents.document.querySelector("img") as HTMLImageElement;
-    await act(async () => {
-      dispatchTouchEvent(
-        image,
-        "touchstart",
-        [
-          { clientX: 100, clientY: 300 },
-          { clientX: 200, clientY: 300 }
-        ]
-      );
-      dispatchGestureEvent(image, "gesturestart", 1);
-      dispatchGestureEvent(image, "gesturechange", 2);
-      // WebKit can finish the Touch Events stream before gestureend. This must
-      // not commit the unchanged 100% touch preview.
-      dispatchTouchEvent(image, "touchend", [], []);
-      dispatchGestureEvent(image, "gestureend", 2);
-      await Promise.resolve();
-    });
-
-    await waitFor(() => {
-      expect(contents.document.body.style.transform).toBe("scale(0.35) scale(2)");
-    });
-  });
-
-  it("treats SVG-wrapped comic pages as zoomable image pages", async () => {
-    const { file } = createTestFile("svg-comic.epub", 7);
-    mocks.book.package.metadata.layout = "pre-paginated";
-    const contents = createImageContents({ svg: true });
-
-    render(<Reader file={file} onClose={() => {}} />);
-    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
-    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
-      | ((value: ReturnType<typeof createImageContents>) => void)
-      | undefined;
-    act(() => contentHook?.(contents));
-
-    expect(contents.document.documentElement.classList.contains("reader-image-page")).toBe(true);
-    expect(contents.document.documentElement.classList.contains("reader-fixed-layout-page")).toBe(
-      true
-    );
   });
 });
