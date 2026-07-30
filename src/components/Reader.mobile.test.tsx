@@ -99,6 +99,22 @@ function createTestFile(name: string, lastModified: number) {
   return { file, arrayBuffer };
 }
 
+type TouchPoint = { clientX: number; clientY: number };
+
+function dispatchTouchEvent(
+  target: Element,
+  type: "touchstart" | "touchmove" | "touchend",
+  touches: TouchPoint[],
+  changedTouches: TouchPoint[] = touches
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    touches: { configurable: true, value: touches },
+    changedTouches: { configurable: true, value: changedTouches }
+  });
+  target.dispatchEvent(event);
+}
+
 describe("Reader mobile scroll controls", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -246,6 +262,9 @@ describe("Reader mobile scroll controls", () => {
 
     const { container } = render(<Reader file={file} onClose={() => {}} />);
     await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(container.querySelector(".progress-label")?.textContent).toMatch(/^第 /)
+    );
 
     const contents = createImageContents();
     const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
@@ -263,42 +282,29 @@ describe("Reader mobile scroll controls", () => {
     const image = contents.document.querySelector("img") as HTMLImageElement;
 
     // A tap at the old right-edge location now only toggles controls.
-    fireEvent.touchStart(image, {
-      touches: [{ clientX: 389, clientY: 400 }]
-    });
-    fireEvent.touchEnd(image, {
-      touches: [],
-      changedTouches: [{ clientX: 389, clientY: 400 }]
+    act(() => {
+      dispatchTouchEvent(image, "touchstart", [{ clientX: 389, clientY: 400 }]);
+      dispatchTouchEvent(image, "touchend", [], [{ clientX: 389, clientY: 400 }]);
     });
     expect(mocks.rendition.next).not.toHaveBeenCalled();
     expect(mocks.rendition.prev).not.toHaveBeenCalled();
 
     // An upward swipe works even when it starts at the old right hotzone. The
     // stale touchend coordinate emulates WebKit; the last touchmove wins.
-    fireEvent.touchStart(image, {
-      touches: [{ clientX: 380, clientY: 620 }]
-    });
-    fireEvent.touchMove(image, {
-      touches: [{ clientX: 378, clientY: 470 }]
-    });
-    fireEvent.touchEnd(image, {
-      touches: [],
-      changedTouches: [{ clientX: 380, clientY: 620 }]
+    act(() => {
+      dispatchTouchEvent(image, "touchstart", [{ clientX: 380, clientY: 620 }]);
+      dispatchTouchEvent(image, "touchmove", [{ clientX: 378, clientY: 470 }]);
+      dispatchTouchEvent(image, "touchend", [], [{ clientX: 380, clientY: 620 }]);
     });
     await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
 
     await new Promise((resolve) => window.setTimeout(resolve, 220));
 
     // A downward swipe works from the old left hotzone and goes back.
-    fireEvent.touchStart(image, {
-      touches: [{ clientX: 10, clientY: 250 }]
-    });
-    fireEvent.touchMove(image, {
-      touches: [{ clientX: 12, clientY: 410 }]
-    });
-    fireEvent.touchEnd(image, {
-      touches: [],
-      changedTouches: [{ clientX: 12, clientY: 410 }]
+    act(() => {
+      dispatchTouchEvent(image, "touchstart", [{ clientX: 10, clientY: 250 }]);
+      dispatchTouchEvent(image, "touchmove", [{ clientX: 12, clientY: 410 }]);
+      dispatchTouchEvent(image, "touchend", [], [{ clientX: 12, clientY: 410 }]);
     });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });

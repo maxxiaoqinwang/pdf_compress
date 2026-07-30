@@ -155,6 +155,9 @@ async function renderPageReader(imageScale = 100) {
 
   const view = render(<Reader file={file} onClose={() => {}} />);
   await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(view.container.querySelector(".progress-label")).toHaveTextContent("第 1/2 页")
+  );
   const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
     | ((value: ReturnType<typeof createImageContents>) => void)
     | undefined;
