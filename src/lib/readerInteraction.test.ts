@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getCenteredScaledContentOffset,
   getEstimatedSingleImageHeight,
   getImageScaleStylesheet,
   getLocationSpineIndex,
@@ -265,6 +266,26 @@ describe("getScaledFixedLayoutWidth", () => {
 
   it("allows pinch zoom up to 400 percent", () => {
     expect(getScaledFixedLayoutWidth("width=1920,height=2560", undefined, 400)).toBe(7680);
+  });
+});
+
+describe("getCenteredScaledContentOffset", () => {
+  it("centers a scaled fixed-layout canvas in the visible iframe space", () => {
+    expect(
+      getCenteredScaledContentOffset({
+        viewportWidth: 778,
+        visualWidth: 576
+      })
+    ).toBe(101);
+  });
+
+  it("does not offset content that already fills the viewport", () => {
+    expect(
+      getCenteredScaledContentOffset({
+        viewportWidth: 390,
+        visualWidth: 390
+      })
+    ).toBe(0);
   });
 });
 

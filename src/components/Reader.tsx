@@ -18,6 +18,7 @@ import {
   type ReadingMode
 } from "../lib/storage";
 import {
+  getCenteredScaledContentOffset,
   getEstimatedSingleImageHeight,
   getImageScaleStylesheet,
   getLocationPercentage,
@@ -1407,6 +1408,7 @@ function syncSingleImageViewHeight(
     const height = `${targetHeight}px`;
     frameElement.style.setProperty("height", height);
     viewElement.style.setProperty("height", height);
+    centerSingleImageDocument(contents, image);
   };
 
   // Set a non-zero placeholder synchronously, before epub.js continuous fill()
@@ -1467,10 +1469,34 @@ function clearSingleImageViewLayout(contents: Contents) {
   frameElement?.style.removeProperty("max-width");
   frameElement?.style.removeProperty("margin-left");
   frameElement?.style.removeProperty("margin-right");
+  contents.document.body?.style.removeProperty("margin-left");
+  contents.document.body?.style.removeProperty("margin-right");
   viewElement?.style.removeProperty("width");
   viewElement?.style.removeProperty("max-width");
   viewElement?.style.removeProperty("margin-left");
   viewElement?.style.removeProperty("margin-right");
+}
+
+function centerSingleImageDocument(contents: Contents, image: HTMLImageElement) {
+  const body = contents.document.body;
+  if (!body) {
+    return;
+  }
+
+  const frameElement = contents.window.frameElement as HTMLIFrameElement | null;
+  const frameBounds = frameElement?.getBoundingClientRect();
+  const viewportWidth =
+    readFiniteLayoutValue(contents.window.innerWidth) ||
+    readFiniteLayoutValue(contents.document.documentElement?.clientWidth) ||
+    readFiniteLayoutValue(frameBounds?.width);
+  const imageBounds = image.getBoundingClientRect();
+  const offset = getCenteredScaledContentOffset({
+    viewportWidth,
+    visualWidth: imageBounds.width
+  });
+  const marginLeft = `${Math.round(offset * 1000) / 1000}px`;
+  body.style.setProperty("margin-left", marginLeft, "important");
+  body.style.setProperty("margin-right", "0px", "important");
 }
 
 function previewImageScale(contents: Contents, imageScale: number) {

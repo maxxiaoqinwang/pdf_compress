@@ -72,6 +72,11 @@ type EstimatedSingleImageHeightInput = {
   fallbackHeight?: number;
 };
 
+type CenteredScaledContentOffsetInput = {
+  viewportWidth: number;
+  visualWidth: number;
+};
+
 export function getPageClickDirection({
   readingMode,
   gripMode = "right",
@@ -281,6 +286,24 @@ export function getScaledFixedLayoutWidth(
   const baseWidth = viewportWidth ?? readPositiveNumber(imageNaturalWidth);
 
   return baseWidth === null ? null : Math.round((baseWidth * scale) / 100);
+}
+
+export function getCenteredScaledContentOffset({
+  viewportWidth,
+  visualWidth
+}: CenteredScaledContentOffsetInput): number {
+  const safeViewportWidth = readPositiveNumber(viewportWidth);
+  const safeVisualWidth = readPositiveNumber(visualWidth);
+
+  if (safeViewportWidth === null || safeVisualWidth === null) {
+    return 0;
+  }
+
+  if (safeVisualWidth >= safeViewportWidth) {
+    return 0;
+  }
+
+  return Math.max(0, (safeViewportWidth - safeVisualWidth) / 2);
 }
 
 export function getToolbarPageControls(gripMode: GripMode): ToolbarPageControl[] {
