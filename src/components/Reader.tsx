@@ -1323,6 +1323,7 @@ function markSingleImagePage(
 
   if (!isSingleImagePage) {
     doc.documentElement.style.removeProperty("--reader-fixed-layout-width");
+    clearSingleImageViewLayout(contents);
     return false;
   }
 
@@ -1365,7 +1366,10 @@ function syncSingleImageViewHeight(
     return;
   }
 
+  applySingleImageViewLayout(frameElement, viewElement);
+
   const applyHeight = () => {
+    applySingleImageViewLayout(frameElement, viewElement);
     updateSingleImagePageWidth(contents, image, imageScale);
     const imageHeight = image.getBoundingClientRect().height;
     const parentBounds = viewElement.parentElement?.getBoundingClientRect();
@@ -1437,6 +1441,36 @@ function syncSingleImageViewHeight(
     contents.window.removeEventListener("resize", scheduleHeight);
     resizeObserver?.disconnect();
   };
+}
+
+function applySingleImageViewLayout(frameElement: HTMLIFrameElement, viewElement: HTMLElement) {
+  frameElement.dataset.readerImageFrame = "true";
+  viewElement.dataset.readerImageView = "true";
+  frameElement.style.setProperty("display", "block");
+  frameElement.style.setProperty("width", "100%");
+  frameElement.style.setProperty("max-width", "100%");
+  frameElement.style.setProperty("margin-left", "auto");
+  frameElement.style.setProperty("margin-right", "auto");
+  viewElement.style.setProperty("width", "100%");
+  viewElement.style.setProperty("max-width", "100%");
+  viewElement.style.setProperty("margin-left", "auto");
+  viewElement.style.setProperty("margin-right", "auto");
+}
+
+function clearSingleImageViewLayout(contents: Contents) {
+  const frameElement = contents.window.frameElement as HTMLIFrameElement | null;
+  const viewElement = frameElement?.closest(".epub-view") as HTMLElement | null;
+  frameElement?.removeAttribute("data-reader-image-frame");
+  viewElement?.removeAttribute("data-reader-image-view");
+  frameElement?.style.removeProperty("display");
+  frameElement?.style.removeProperty("width");
+  frameElement?.style.removeProperty("max-width");
+  frameElement?.style.removeProperty("margin-left");
+  frameElement?.style.removeProperty("margin-right");
+  viewElement?.style.removeProperty("width");
+  viewElement?.style.removeProperty("max-width");
+  viewElement?.style.removeProperty("margin-left");
+  viewElement?.style.removeProperty("margin-right");
 }
 
 function previewImageScale(contents: Contents, imageScale: number) {

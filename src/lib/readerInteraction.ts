@@ -191,12 +191,16 @@ export function getImageScaleStylesheet(imageScale: number): string {
         max-width: none !important;
         height: auto !important;
         min-height: 100% !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
         overflow: auto !important;
         overscroll-behavior: contain !important;
         touch-action: pan-x pan-y !important;
       }
       html.reader-image-document body {
-        display: block !important;
+        display: flex !important;
+        justify-content: center !important;
+        align-items: flex-start !important;
         width: 100% !important;
         max-width: none !important;
         height: auto !important;
@@ -212,7 +216,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
         max-width: none !important;
         height: auto !important;
         object-fit: contain !important;
-        margin: 0 !important;
+        margin: 0 auto !important;
         cursor: ${cursor} !important;
         user-select: none !important;
         -webkit-user-drag: none !important;
@@ -223,7 +227,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
         width: 100% !important;
         max-width: none !important;
         height: auto !important;
-        margin: 0 !important;
+        margin: 0 auto !important;
         cursor: ${cursor} !important;
         user-select: none !important;
         touch-action: pan-x pan-y !important;
