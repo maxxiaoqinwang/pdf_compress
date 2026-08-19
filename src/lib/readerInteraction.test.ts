@@ -215,6 +215,7 @@ describe("getImageScaleStylesheet", () => {
     expect(stylesheet).toContain("html.reader-image-document");
     expect(stylesheet).toContain("width: var(--reader-fixed-layout-width, 175%)");
     expect(stylesheet).toContain("margin-left: auto !important");
+    expect(stylesheet).toContain("background: #000 !important");
     expect(stylesheet).toContain("justify-content: center !important");
     expect(stylesheet).toContain("html.reader-image-document img");
     expect(stylesheet).toContain("width: 100% !important");

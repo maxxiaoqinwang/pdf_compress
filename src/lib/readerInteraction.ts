@@ -198,6 +198,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
         min-height: 100% !important;
         margin-left: auto !important;
         margin-right: auto !important;
+        background: #000 !important;
         overflow: auto !important;
         overscroll-behavior: contain !important;
         touch-action: pan-x pan-y !important;
@@ -212,6 +213,7 @@ export function getImageScaleStylesheet(imageScale: number): string {
         min-height: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
+        background: #000 !important;
         overflow: visible !important;
         touch-action: pan-x pan-y !important;
       }

@@ -1453,10 +1453,12 @@ function applySingleImageViewLayout(frameElement: HTMLIFrameElement, viewElement
   frameElement.style.setProperty("max-width", "100%");
   frameElement.style.setProperty("margin-left", "auto");
   frameElement.style.setProperty("margin-right", "auto");
+  frameElement.style.setProperty("background-color", "#000");
   viewElement.style.setProperty("width", "100%");
   viewElement.style.setProperty("max-width", "100%");
   viewElement.style.setProperty("margin-left", "auto");
   viewElement.style.setProperty("margin-right", "auto");
+  viewElement.style.setProperty("background-color", "#000");
 }
 
 function clearSingleImageViewLayout(contents: Contents) {
@@ -1469,12 +1471,14 @@ function clearSingleImageViewLayout(contents: Contents) {
   frameElement?.style.removeProperty("max-width");
   frameElement?.style.removeProperty("margin-left");
   frameElement?.style.removeProperty("margin-right");
+  frameElement?.style.removeProperty("background-color");
   contents.document.body?.style.removeProperty("margin-left");
   contents.document.body?.style.removeProperty("margin-right");
   viewElement?.style.removeProperty("width");
   viewElement?.style.removeProperty("max-width");
   viewElement?.style.removeProperty("margin-left");
   viewElement?.style.removeProperty("margin-right");
+  viewElement?.style.removeProperty("background-color");
 }
 
 function centerSingleImageDocument(contents: Contents, image: HTMLImageElement) {
