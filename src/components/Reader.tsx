@@ -85,7 +85,9 @@ export function Reader({ file, onClose }: ReaderProps) {
     side: "left" | "right";
     x: number;
     y: number;
+    lastY: number;
     viewportHeight: number;
+    didScroll: boolean;
   } | null>(null);
   const statusRef = useRef<LoadStatus>("loading");
   const progressSaveTimerRef = useRef<number | null>(null);
@@ -722,8 +724,45 @@ export function Reader({ file, onClose }: ReaderProps) {
       side,
       x: touch.clientX,
       y: touch.clientY,
-      viewportHeight: stageRef.current?.clientHeight ?? window.innerHeight
+      lastY: touch.clientY,
+      viewportHeight: stageRef.current?.clientHeight ?? window.innerHeight,
+      didScroll: false
     };
+  }
+
+  function handleHotzoneTouchMove(
+    side: "left" | "right",
+    event: React.TouchEvent<HTMLButtonElement>
+  ) {
+    const start = hotzoneTouchStartRef.current;
+    const touch = event.touches[0];
+    const stage = stageRef.current;
+    if (!start || !touch || start.side !== side || event.touches.length !== 1 || !stage) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, stage.scrollHeight - stage.clientHeight);
+    if (maxScrollTop <= 4) {
+      return;
+    }
+
+    const totalX = touch.clientX - start.x;
+    const totalY = touch.clientY - start.y;
+    if (Math.abs(totalY) <= 3 || Math.abs(totalY) <= Math.abs(totalX)) {
+      return;
+    }
+
+    const nextScrollTop = Math.min(
+      maxScrollTop,
+      Math.max(0, stage.scrollTop + start.lastY - touch.clientY)
+    );
+    if (nextScrollTop !== stage.scrollTop) {
+      stage.scrollTop = nextScrollTop;
+      start.didScroll = true;
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    start.lastY = touch.clientY;
   }
 
   function handleHotzoneTouchEnd(
@@ -734,6 +773,13 @@ export function Reader({ file, onClose }: ReaderProps) {
     const touch = event.changedTouches[0];
     hotzoneTouchStartRef.current = null;
     if (!start || !touch || start.side !== side) {
+      return;
+    }
+
+    if (start.didScroll) {
+      event.preventDefault();
+      event.stopPropagation();
+      lastHotzoneTouchRef.current = Date.now();
       return;
     }
 
@@ -836,6 +882,7 @@ export function Reader({ file, onClose }: ReaderProps) {
               tabIndex={-1}
               aria-label="上一页"
               onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
+              onTouchMove={(event) => handleHotzoneTouchMove("left", event)}
               onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
               onClick={(event) => handleHotzoneClick("left", event)}
             />
@@ -845,6 +892,7 @@ export function Reader({ file, onClose }: ReaderProps) {
               tabIndex={-1}
               aria-label="下一页"
               onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
+              onTouchMove={(event) => handleHotzoneTouchMove("right", event)}
               onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
               onClick={(event) => handleHotzoneClick("right", event)}
             />
