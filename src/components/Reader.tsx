@@ -824,32 +824,32 @@ export function Reader({ file, onClose }: ReaderProps) {
             </div>
           ) : null}
           <div ref={mountRef} className="rendition-root" />
-          {status === "ready" &&
-          readingMode === "page" &&
-          imageDocumentActive &&
-          imageScale <= 100 ? (
-            <div className="reader-hotzones" aria-label="分页点击区域">
-              <button
-                className="reader-hotzone left"
-                type="button"
-                tabIndex={-1}
-                aria-label="上一页"
-                onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
-                onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
-                onClick={(event) => handleHotzoneClick("left", event)}
-              />
-              <button
-                className="reader-hotzone right"
-                type="button"
-                tabIndex={-1}
-                aria-label="下一页"
-                onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
-                onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
-                onClick={(event) => handleHotzoneClick("right", event)}
-              />
-            </div>
-          ) : null}
         </div>
+        {status === "ready" &&
+        readingMode === "page" &&
+        imageDocumentActive &&
+        imageScale <= 100 ? (
+          <div className="reader-hotzones" aria-label="分页点击区域">
+            <button
+              className="reader-hotzone left"
+              type="button"
+              tabIndex={-1}
+              aria-label="上一页"
+              onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
+              onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
+              onClick={(event) => handleHotzoneClick("left", event)}
+            />
+            <button
+              className="reader-hotzone right"
+              type="button"
+              tabIndex={-1}
+              aria-label="下一页"
+              onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
+              onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
+              onClick={(event) => handleHotzoneClick("right", event)}
+            />
+          </div>
+        ) : null}
       </div>
 
       {isCompactViewport && status === "ready" && !chromeIsVisible ? (

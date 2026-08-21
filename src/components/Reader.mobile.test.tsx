@@ -386,4 +386,36 @@ describe("Reader mobile scroll controls", () => {
     });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
+
+  it("keeps page tap zones outside the scrollable stage for tall image pages", async () => {
+    const { file } = createTestFile("comic-tall.epub", 7);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const layout = container.querySelector(".reader-layout") as HTMLElement;
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    const hotzones = container.querySelector(".reader-hotzones") as HTMLElement;
+
+    expect(layout).toContainElement(hotzones);
+    expect(stage).not.toContainElement(hotzones);
+  });
 });
