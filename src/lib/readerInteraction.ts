@@ -72,6 +72,12 @@ type EstimatedSingleImageHeightInput = {
   fallbackHeight?: number;
 };
 
+type StableSingleImageHeightInput = {
+  measuredHeight?: number | null;
+  estimatedHeight?: number | null;
+  fallbackHeight?: number | null;
+};
+
 type CenteredScaledContentOffsetInput = {
   viewportWidth: number;
   visualWidth: number;
@@ -278,6 +284,20 @@ export function getEstimatedSingleImageHeight({
   return safeFallback === null ? null : Math.ceil(safeFallback);
 }
 
+export function getStableSingleImageHeight({
+  measuredHeight,
+  estimatedHeight,
+  fallbackHeight
+}: StableSingleImageHeightInput): number {
+  return Math.ceil(
+    Math.max(
+      readPositiveNumber(measuredHeight) ?? 0,
+      readPositiveNumber(estimatedHeight) ?? 0,
+      readPositiveNumber(fallbackHeight) ?? 1
+    )
+  );
+}
+
 export function getScaledFixedLayoutWidth(
   viewportContent: string | null | undefined,
   imageNaturalWidth: number | null | undefined,
@@ -358,7 +378,8 @@ export function getScrollImagePageViewHeight(
 export function getPageImageFrameHeight(
   readingMode: ReadingMode,
   isSingleImagePage: boolean,
-  pageHeight: number
+  pageHeight: number,
+  imageHeight = pageHeight
 ): number | null {
   if (
     readingMode !== "page" ||
@@ -369,7 +390,10 @@ export function getPageImageFrameHeight(
     return null;
   }
 
-  return Math.ceil(pageHeight);
+  const safeImageHeight =
+    Number.isFinite(imageHeight) && imageHeight > 0 ? imageHeight : pageHeight;
+
+  return Math.ceil(Math.max(pageHeight, safeImageHeight));
 }
 
 export function getProgressPercent(location: unknown, spineItemCount?: number): number {

@@ -37,7 +37,7 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
 export const DEFAULT_BOOK_PROGRESS: BookProgress = {
   cfi: null,
   percentage: null,
-  readingMode: "scroll",
+  readingMode: "page",
   updatedAt: 0
 };
 
@@ -98,7 +98,10 @@ function normalizeBookProgress(value: Partial<BookProgress>): BookProgress {
   return {
     cfi: typeof value.cfi === "string" && value.cfi.length > 0 ? value.cfi : null,
     percentage: normalizePercentage(value.percentage),
-    readingMode: value.readingMode === "page" ? "page" : "scroll",
+    readingMode:
+      value.readingMode === "page" || value.readingMode === "scroll"
+        ? value.readingMode
+        : DEFAULT_BOOK_PROGRESS.readingMode,
     updatedAt:
       typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt) && value.updatedAt > 0
         ? Math.round(value.updatedAt)

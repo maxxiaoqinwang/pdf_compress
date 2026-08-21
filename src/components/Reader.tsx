@@ -30,6 +30,7 @@ import {
   getProgressPercent,
   getScaledFixedLayoutWidth,
   getScrollImagePageViewHeight,
+  getStableSingleImageHeight,
   getToolbarPageControls,
   getVerticalPageSwipeDirection,
   getTouchDistance,
@@ -440,6 +441,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     );
 
     const handleRelocated = (location: Location) => {
+      stageRef.current?.scrollTo({ top: 0, left: 0 });
       updateProgressFromLocation(location, book);
     };
     rendition.on("relocated", handleRelocated);
@@ -741,13 +743,16 @@ export function Reader({ file, onClose }: ReaderProps) {
       endX: touch.clientX,
       endY: touch.clientY
     });
+    const stageSwipeAvailability = getStagePageSwipeAvailability(stageRef.current);
     const swipeDirection = getVerticalPageSwipeDirection({
       readingMode: "page",
       startX: start.x,
       startY: start.y,
       endX: touch.clientX,
       endY: touch.clientY,
-      viewportHeight: start.viewportHeight
+      viewportHeight: start.viewportHeight,
+      allowPrev: stageSwipeAvailability.prev,
+      allowNext: stageSwipeAvailability.next
     });
     if (!wasTap && !swipeDirection) {
       return;
@@ -782,7 +787,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     <section
       className={`reader-shell ${theme} ${readingMode} ${
         chromeIsVisible ? "controls-visible" : "controls-hidden"
-      }`}
+      } ${imageDocumentActive ? "image-document-active" : ""}`}
       aria-label="EPUB 阅读器"
     >
       <div className="reader-chrome-top" aria-hidden={!chromeIsVisible}>
@@ -1392,8 +1397,17 @@ function syncSingleImageViewHeight(
       imageScale,
       fallbackHeight: pageHeight
     });
-    const stableImageHeight = imageHeight > 1 ? imageHeight : estimatedImageHeight ?? pageHeight;
-    const pageFrameHeight = getPageImageFrameHeight(readingMode, true, pageHeight);
+    const stableImageHeight = getStableSingleImageHeight({
+      measuredHeight: imageHeight,
+      estimatedHeight: estimatedImageHeight,
+      fallbackHeight: pageHeight
+    });
+    const pageFrameHeight = getPageImageFrameHeight(
+      readingMode,
+      true,
+      pageHeight,
+      stableImageHeight
+    );
     const scrollViewHeight = getScrollImagePageViewHeight(
       readingMode,
       true,
@@ -1859,6 +1873,18 @@ function getContentPageSwipeAvailability(contents: Contents): PageSwipeAvailabil
     contentTop: bounds.top,
     contentBottom: bounds.bottom,
     viewportHeight
+  });
+}
+
+function getStagePageSwipeAvailability(stage: HTMLElement | null): PageSwipeAvailability {
+  if (!stage || stage.scrollHeight <= stage.clientHeight + 4) {
+    return { prev: true, next: true, scrollable: false };
+  }
+
+  return getPageSwipeAvailability({
+    contentTop: -stage.scrollTop,
+    contentBottom: stage.scrollHeight - stage.scrollTop,
+    viewportHeight: stage.clientHeight
   });
 }
 

@@ -213,6 +213,22 @@ h1 {
   overflow: hidden;
 }
 
+.reader-shell.page.image-document-active .reader-stage {
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.reader-shell.page.image-document-active .rendition-root,
+.reader-shell.page.image-document-active .rendition-root > div,
+.reader-shell.page.image-document-active .rendition-root .epub-container {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow-x: hidden !important;
+  overflow-y: visible !important;
+}
+
 .rendition-root > div,
 .rendition-root .epub-container {
   max-width: 100%;
@@ -244,7 +260,7 @@ h1 {
   opacity: 0;
   background: transparent;
   pointer-events: auto;
-  touch-action: manipulation;
+  touch-action: pan-y;
 }
 
 .reader-hotzone.left {

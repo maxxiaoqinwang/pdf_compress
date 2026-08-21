@@ -156,7 +156,7 @@ describe("Reader mobile scroll controls", () => {
     );
   });
 
-  it("opens a large scroll book without making an extra ArrayBuffer copy", async () => {
+  it("opens a large new book in page mode without making an extra ArrayBuffer copy", async () => {
     const { file, arrayBuffer } = createTestFile("large.epub", 2);
     Object.defineProperty(file, "size", { configurable: true, value: LARGE_FILE_SIZE });
 
@@ -169,10 +169,8 @@ describe("Reader mobile scroll controls", () => {
     expect(mocks.book.renderTo).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       expect.objectContaining({
-        flow: "scrolled",
-        manager: "continuous",
-        offset: 240,
-        offsetDelta: 0
+        flow: "paginated",
+        manager: "default"
       })
     );
   });

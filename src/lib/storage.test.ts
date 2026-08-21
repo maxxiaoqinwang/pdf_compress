@@ -25,7 +25,7 @@ describe("reader storage", () => {
     expect(loadBookProgress("book-a")).toEqual({
       cfi: null,
       percentage: null,
-      readingMode: "scroll",
+      readingMode: "page",
       updatedAt: 0
     });
   });
@@ -123,7 +123,7 @@ describe("reader storage", () => {
     expect(loadBookProgress("book-a")).toEqual({
       cfi: null,
       percentage: 100,
-      readingMode: "scroll",
+      readingMode: "page",
       updatedAt: 0
     });
   });

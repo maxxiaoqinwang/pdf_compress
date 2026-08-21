@@ -11,6 +11,7 @@ import {
   getProgressPercent,
   getScrollImagePageViewHeight,
   getScaledFixedLayoutWidth,
+  getStableSingleImageHeight,
   getToolbarPageControls,
   getVerticalPageSwipeDirection,
   getTouchDistance,
@@ -256,6 +257,18 @@ describe("getEstimatedSingleImageHeight", () => {
   });
 });
 
+describe("getStableSingleImageHeight", () => {
+  it("prefers the width-fit estimate when epub.js has already shrunk a long image by height", () => {
+    expect(
+      getStableSingleImageHeight({
+        measuredHeight: 844,
+        estimatedHeight: 2275,
+        fallbackHeight: 844
+      })
+    ).toBe(2275);
+  });
+});
+
 describe("getScaledFixedLayoutWidth", () => {
   it("scales from the fixed-layout viewport width instead of the iframe width", () => {
     expect(getScaledFixedLayoutWidth("width=1920,height=2560", undefined, 175)).toBe(3360);
@@ -296,8 +309,9 @@ describe("single-image frame sizing", () => {
     expect(getScrollImagePageViewHeight("scroll", false, 804.4)).toBeNull();
   });
 
-  it("uses the visible page height only for single-image paginated pages", () => {
-    expect(getPageImageFrameHeight("page", true, 814.2)).toBe(815);
+  it("uses at least the visible page height for single-image paginated pages", () => {
+    expect(getPageImageFrameHeight("page", true, 814.2, 3200.4)).toBe(3201);
+    expect(getPageImageFrameHeight("page", true, 814.2, 600.1)).toBe(815);
     expect(getPageImageFrameHeight("page", false, 814.2)).toBeNull();
   });
 });
