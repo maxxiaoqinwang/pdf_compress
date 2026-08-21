@@ -381,19 +381,20 @@ export function getPageImageFrameHeight(
   pageHeight: number,
   imageHeight = pageHeight
 ): number | null {
+  const safePageHeight =
+    Number.isFinite(pageHeight) && pageHeight > 0 ? pageHeight : 0;
+  const safeImageHeight =
+    Number.isFinite(imageHeight) && imageHeight > 0 ? imageHeight : 0;
+
   if (
     readingMode !== "page" ||
     !isSingleImagePage ||
-    !Number.isFinite(pageHeight) ||
-    pageHeight <= 0
+    (safePageHeight <= 0 && safeImageHeight <= 0)
   ) {
     return null;
   }
 
-  const safeImageHeight =
-    Number.isFinite(imageHeight) && imageHeight > 0 ? imageHeight : pageHeight;
-
-  return Math.ceil(Math.max(pageHeight, safeImageHeight));
+  return Math.ceil(Math.max(safePageHeight, safeImageHeight));
 }
 
 export function getProgressPercent(location: unknown, spineItemCount?: number): number {

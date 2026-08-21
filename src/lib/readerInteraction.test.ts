@@ -314,6 +314,10 @@ describe("single-image frame sizing", () => {
     expect(getPageImageFrameHeight("page", true, 814.2, 600.1)).toBe(815);
     expect(getPageImageFrameHeight("page", false, 814.2)).toBeNull();
   });
+
+  it("uses the estimated image height when epub.js reports a zero-height page during a turn", () => {
+    expect(getPageImageFrameHeight("page", true, 0, 2059.1)).toBe(2060);
+  });
 });
 
 describe("isTapGesture", () => {
