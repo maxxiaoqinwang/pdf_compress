@@ -52,7 +52,7 @@ describe("getPageClickDirection", () => {
     ).toBeNull();
   });
 
-  it("keeps physical page edges stable in left-hand mode", () => {
+  it("puts next page on the left edge in left-hand mode", () => {
     expect(
       getPageClickDirection({
         readingMode: "page",
@@ -61,7 +61,7 @@ describe("getPageClickDirection", () => {
         boundsLeft: 20,
         boundsWidth: 400
       })
-    ).toBe("prev");
+    ).toBe("next");
     expect(
       getPageClickDirection({
         readingMode: "page",
@@ -70,7 +70,7 @@ describe("getPageClickDirection", () => {
         boundsLeft: 20,
         boundsWidth: 400
       })
-    ).toBe("next");
+    ).toBe("prev");
   });
 
   it("uses edge taps as viewport navigation in scrolling mode", () => {

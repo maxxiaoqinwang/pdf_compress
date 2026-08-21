@@ -368,11 +368,11 @@ describe("Reader mobile scroll controls", () => {
     const rightZoneAfterChange = container.querySelector(
       ".reader-hotzone.right"
     ) as HTMLButtonElement;
-    expect(leftZoneAfterChange).toHaveAccessibleName("上一页");
-    expect(rightZoneAfterChange).toHaveAccessibleName("下一页");
+    expect(leftZoneAfterChange).toHaveAccessibleName("下一页");
+    expect(rightZoneAfterChange).toHaveAccessibleName("上一页");
 
     await act(async () => {
-      fireEvent.click(rightZoneAfterChange);
+      fireEvent.click(leftZoneAfterChange);
       await Promise.resolve();
     });
     await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledTimes(2));
@@ -381,7 +381,7 @@ describe("Reader mobile scroll controls", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 200));
     });
     await act(async () => {
-      fireEvent.click(leftZoneAfterChange);
+      fireEvent.click(rightZoneAfterChange);
       await Promise.resolve();
     });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
