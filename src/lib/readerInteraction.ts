@@ -85,7 +85,6 @@ type CenteredScaledContentOffsetInput = {
 
 export function getPageClickDirection({
   readingMode,
-  gripMode = "right",
   clientX,
   boundsLeft,
   boundsWidth,
@@ -99,10 +98,6 @@ export function getPageClickDirection({
   const side = position <= edgeRatio ? "left" : position >= 1 - edgeRatio ? "right" : null;
   if (!side) {
     return null;
-  }
-
-  if (gripMode === "left") {
-    return side === "left" ? "next" : "prev";
   }
 
   return side === "left" ? "prev" : "next";

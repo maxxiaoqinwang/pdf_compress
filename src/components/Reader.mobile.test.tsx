@@ -292,4 +292,98 @@ describe("Reader mobile scroll controls", () => {
     });
     await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
   });
+
+  it("keeps page edge taps active after changing the hand mode", async () => {
+    const { file } = createTestFile("comic-grip.epub", 6);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 390,
+        bottom: 844,
+        left: 0,
+        width: 390,
+        height: 844,
+        toJSON: () => ({})
+      })
+    });
+
+    const rightZoneBeforeChange = container.querySelector(
+      ".reader-hotzone.right"
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(rightZoneBeforeChange);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "设置" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "左手" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "阅读设置" })).not.toBeInTheDocument()
+    );
+
+    const leftZoneAfterChange = container.querySelector(
+      ".reader-hotzone.left"
+    ) as HTMLButtonElement;
+    const rightZoneAfterChange = container.querySelector(
+      ".reader-hotzone.right"
+    ) as HTMLButtonElement;
+    expect(leftZoneAfterChange).toHaveAccessibleName("上一页");
+    expect(rightZoneAfterChange).toHaveAccessibleName("下一页");
+
+    await act(async () => {
+      fireEvent.click(rightZoneAfterChange);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+    });
+    await act(async () => {
+      fireEvent.click(leftZoneAfterChange);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.rendition.prev).toHaveBeenCalledOnce());
+  });
 });

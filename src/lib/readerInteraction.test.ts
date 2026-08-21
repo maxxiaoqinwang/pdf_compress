@@ -52,12 +52,21 @@ describe("getPageClickDirection", () => {
     ).toBeNull();
   });
 
-  it("puts next page on the left edge in left-hand mode", () => {
+  it("keeps physical page edges stable in left-hand mode", () => {
     expect(
       getPageClickDirection({
         readingMode: "page",
         gripMode: "left",
         clientX: 80,
+        boundsLeft: 20,
+        boundsWidth: 400
+      })
+    ).toBe("prev");
+    expect(
+      getPageClickDirection({
+        readingMode: "page",
+        gripMode: "left",
+        clientX: 380,
         boundsLeft: 20,
         boundsWidth: 400
       })

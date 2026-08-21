@@ -833,7 +833,7 @@ export function Reader({ file, onClose }: ReaderProps) {
                 className="reader-hotzone left"
                 type="button"
                 tabIndex={-1}
-                aria-label={gripMode === "left" ? "下一页" : "上一页"}
+                aria-label="上一页"
                 onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
                 onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
                 onClick={(event) => handleHotzoneClick("left", event)}
@@ -842,7 +842,7 @@ export function Reader({ file, onClose }: ReaderProps) {
                 className="reader-hotzone right"
                 type="button"
                 tabIndex={-1}
-                aria-label={gripMode === "left" ? "上一页" : "下一页"}
+                aria-label="下一页"
                 onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
                 onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
                 onClick={(event) => handleHotzoneClick("right", event)}
