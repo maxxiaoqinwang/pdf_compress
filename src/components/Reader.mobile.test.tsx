@@ -443,6 +443,42 @@ describe("Reader mobile scroll controls", () => {
     expect(stage).not.toContainElement(hotzones);
   });
 
+  it("narrows page tap zones to 15 percent for tall image pages", async () => {
+    const { file } = createTestFile("comic-tall-hotzones.epub", 10);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperties(stage, {
+      clientHeight: { configurable: true, value: 844 },
+      scrollHeight: { configurable: true, value: 2200 }
+    });
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const hotzones = container.querySelector(".reader-hotzones") as HTMLElement;
+    await waitFor(() => {
+      expect(hotzones).toHaveStyle({ "--reader-hotzone-width": "15%" });
+    });
+  });
+
   it("scrolls a tall image page when dragging inside a page tap zone", async () => {
     const { file } = createTestFile("comic-hotzone-scroll.epub", 8);
     localStorage.setItem(

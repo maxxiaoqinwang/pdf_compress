@@ -76,6 +76,9 @@ const COMPACT_READER_QUERY =
   "(max-width: 760px), (pointer: coarse) and (max-height: 500px)";
 const LAZY_RESOURCE_THRESHOLD = 32 * 1024 * 1024;
 const PROGRESS_SAVE_DELAY = 650;
+const DEFAULT_PAGE_HOTZONE_WIDTH = "30%";
+const TALL_IMAGE_PAGE_HOTZONE_WIDTH = "15%";
+const STAGE_SCROLL_TOLERANCE = 4;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +88,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const lazyResourcesRef = useRef<LazyEpubResourceController | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const pageTurnLockedRef = useRef(false);
+  const pageHotzoneWidthRef = useRef(DEFAULT_PAGE_HOTZONE_WIDTH);
   const lastHotzoneTouchRef = useRef(0);
   const hotzoneTouchStartRef = useRef<{
     side: "left" | "right";
@@ -142,8 +146,18 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [isCompactViewport, setIsCompactViewport] = useState(readCompactViewport);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [imageDocumentActive, setImageDocumentActive] = useState(false);
+  const [pageHotzoneWidth, setPageHotzoneWidth] = useState(DEFAULT_PAGE_HOTZONE_WIDTH);
 
   const pageControls = getToolbarPageControls(gripMode);
+
+  function setMeasuredPageHotzoneWidth(width: string) {
+    if (pageHotzoneWidthRef.current === width) {
+      return;
+    }
+
+    pageHotzoneWidthRef.current = width;
+    setPageHotzoneWidth(width);
+  }
 
   onCloseRef.current = onClose;
   statusRef.current = status;
@@ -185,6 +199,44 @@ export function Reader({ file, onClose }: ReaderProps) {
     mediaQuery.addEventListener?.("change", update);
     return () => mediaQuery.removeEventListener?.("change", update);
   }, []);
+
+  useEffect(() => {
+    if (status !== "ready" || readingMode !== "page" || !imageDocumentActive || imageScale > 100) {
+      setMeasuredPageHotzoneWidth(DEFAULT_PAGE_HOTZONE_WIDTH);
+      return undefined;
+    }
+
+    const updateHotzoneWidth = () => {
+      const stage = stageRef.current;
+      const isTallImagePage = Boolean(
+        stage && stage.scrollHeight > stage.clientHeight + STAGE_SCROLL_TOLERANCE
+      );
+      setMeasuredPageHotzoneWidth(
+        isTallImagePage ? TALL_IMAGE_PAGE_HOTZONE_WIDTH : DEFAULT_PAGE_HOTZONE_WIDTH
+      );
+    };
+
+    updateHotzoneWidth();
+    const animationFrame = window.requestAnimationFrame(updateHotzoneWidth);
+    const timer = window.setTimeout(updateHotzoneWidth, 0);
+    const stage = stageRef.current;
+    const ResizeObserverCtor = (
+      window as unknown as { ResizeObserver?: typeof ResizeObserver }
+    ).ResizeObserver;
+    const observer =
+      stage && typeof ResizeObserverCtor === "function"
+        ? new ResizeObserverCtor(updateHotzoneWidth)
+        : null;
+    if (observer && stage) {
+      observer.observe(stage);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(timer);
+      observer?.disconnect();
+    };
+  }, [status, readingMode, imageDocumentActive, imageScale]);
 
   useEffect(() => {
     if (!isCompactViewport) {
@@ -883,7 +935,11 @@ export function Reader({ file, onClose }: ReaderProps) {
         readingMode === "page" &&
         imageDocumentActive &&
         imageScale <= 100 ? (
-          <div className="reader-hotzones" aria-label="分页点击区域">
+          <div
+            className="reader-hotzones"
+            aria-label="分页点击区域"
+            style={{ "--reader-hotzone-width": pageHotzoneWidth } as CSSProperties}
+          >
             <button
               className="reader-hotzone left"
               type="button"
