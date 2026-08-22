@@ -57,9 +57,14 @@ type ReaderProps = {
 type LoadStatus = "loading" | "ready" | "error";
 type ReaderSheet = "toc" | "settings" | null;
 type ReaderSettings = ReaderPreferences & { readingMode: ReadingMode };
+type PagePosition = {
+  current: number;
+  total: number;
+} | null;
 type ProgressSnapshot = {
   percent: number;
   label: string;
+  pagePosition: PagePosition;
 };
 
 type ReaderDocument = Document & {
@@ -133,6 +138,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [progressLabel, setProgressLabel] = useState(
     savedProgress.percentage === null ? "开始" : `${savedProgress.percentage}%`
   );
+  const [pagePosition, setPagePosition] = useState<PagePosition>(null);
   const [isCompactViewport, setIsCompactViewport] = useState(readCompactViewport);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [imageDocumentActive, setImageDocumentActive] = useState(false);
@@ -266,6 +272,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     setBook(null);
     setProgressPercent(savedProgress.percentage ?? 0);
     setProgressLabel(savedProgress.percentage === null ? "开始" : `${savedProgress.percentage}%`);
+    setPagePosition(null);
     locationsReadyRef.current = false;
     bookLayoutRef.current = "";
 
@@ -600,6 +607,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     );
     setProgressPercent(snapshot.percent);
     setProgressLabel(snapshot.label);
+    setPagePosition(snapshot.pagePosition);
     scheduleProgressSave(cfi ?? restoreCfiRef.current, snapshot.percent, latestSettingsRef.current.readingMode);
   }
 
@@ -957,7 +965,12 @@ export function Reader({ file, onClose }: ReaderProps) {
               </button>
             </header>
             {activeSheet === "toc" ? (
-              <TocPanel toc={toc} onSelect={(href) => void goToChapter(href)} />
+              <TocPanel
+                toc={toc}
+                pagePosition={pagePosition}
+                progressLabel={progressLabel}
+                onSelect={(href) => void goToChapter(href)}
+              />
             ) : (
               <div className="settings-panel">
                 <SettingStepper
@@ -1066,12 +1079,20 @@ export function Reader({ file, onClose }: ReaderProps) {
 
 type TocPanelProps = {
   toc: NavItem[];
+  pagePosition: PagePosition;
+  progressLabel: string;
   onSelect: (href: string) => void;
 };
 
-function TocPanel({ toc, onSelect }: TocPanelProps) {
+function TocPanel({ toc, pagePosition, progressLabel, onSelect }: TocPanelProps) {
+  const positionLabel = pagePosition ? `${pagePosition.current} / ${pagePosition.total}` : progressLabel;
+
   return (
     <nav className="toc-panel sheet" aria-label="目录">
+      <div className="toc-progress-card" aria-label="阅读位置">
+        <span>当前页</span>
+        <strong>{positionLabel}</strong>
+      </div>
       {toc.length > 0 ? <TocList items={toc} onSelect={onSelect} depth={0} /> : <p>这本书没有可用目录。</p>}
     </nav>
   );
@@ -1180,12 +1201,14 @@ function getProgressSnapshot(
   bookLayout: string
 ): ProgressSnapshot {
   const cfi = getLocationCfi(location);
+  const pagePosition = getPagePosition(location, book);
+
   if (locationsReady && cfi) {
     try {
       const percentage = book.locations.percentageFromCfi(cfi);
       if (Number.isFinite(percentage)) {
         const percent = Math.round(Math.min(1, Math.max(0, percentage)) * 100);
-        return { percent, label: `${percent}%` };
+        return { percent, label: `${percent}%`, pagePosition };
       }
     } catch {
       // Fall through to epub.js location data or chapter-level progress.
@@ -1195,7 +1218,7 @@ function getProgressSnapshot(
   const explicitPercentage = getLocationPercentage(location);
   if (explicitPercentage !== null) {
     const percent = getProgressPercent(location);
-    return { percent, label: `${percent}%` };
+    return { percent, label: `${percent}%`, pagePosition };
   }
 
   const spineItemCount = getSpineItemCount(book);
@@ -1205,11 +1228,25 @@ function getProgressSnapshot(
     const unit = bookLayout === "pre-paginated" ? "页" : "章";
     return {
       percent,
-      label: `第 ${Math.min(spineItemCount, spineIndex + 1)}/${spineItemCount} ${unit}`
+      label: `第 ${Math.min(spineItemCount, spineIndex + 1)}/${spineItemCount} ${unit}`,
+      pagePosition
     };
   }
 
-  return { percent: 0, label: "开始" };
+  return { percent: 0, label: "开始", pagePosition };
+}
+
+function getPagePosition(location: unknown, book: Book | null): PagePosition {
+  const total = getSpineItemCount(book);
+  const spineIndex = getLocationSpineIndex(location);
+  if (!total || spineIndex === null) {
+    return null;
+  }
+
+  return {
+    current: Math.min(total, Math.max(1, spineIndex + 1)),
+    total
+  };
 }
 
 function getLocationCfi(location: unknown): string | null {

@@ -593,6 +593,38 @@ h1 {
   color: inherit;
 }
 
+.toc-progress-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(72, 60, 44, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 252, 246, 0.72);
+}
+
+.toc-progress-card span {
+  color: rgba(47, 42, 35, 0.68);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.toc-progress-card strong {
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.night .toc-progress-card {
+  border-color: rgba(231, 224, 213, 0.14);
+  background: rgba(31, 29, 24, 0.78);
+}
+
+.night .toc-progress-card span {
+  color: rgba(231, 224, 213, 0.68);
+}
+
 .toc-panel ol {
   display: grid;
   gap: 3px;

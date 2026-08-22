@@ -105,7 +105,11 @@ describe("Reader mobile scroll controls", () => {
     vi.clearAllMocks();
     mocks.rendition.manager.container = document.createElement("div");
     mocks.book.replacements = vi.fn(async () => undefined);
+    mocks.book.spine.items = [{}];
     mocks.rendition.getContents.mockReturnValue([]);
+    mocks.rendition.currentLocation.mockReturnValue({
+      start: { index: 0, cfi: "epubcfi(/6/2)" }
+    });
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -173,6 +177,26 @@ describe("Reader mobile scroll controls", () => {
         manager: "default"
       })
     );
+  });
+
+  it("shows the current page position at the top of the table of contents", async () => {
+    const { file } = createTestFile("comic-progress.epub", 9);
+    mocks.book.spine.items = Array.from({ length: 10 }, () => ({}));
+    mocks.rendition.currentLocation.mockReturnValue({
+      start: { index: 1, cfi: "epubcfi(/6/4)" }
+    });
+
+    render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.rendition.currentLocation).toHaveBeenCalled());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "目录" }));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("当前页")).toBeInTheDocument();
+    expect(screen.getByText("2 / 10")).toBeInTheDocument();
   });
 
   it("keeps image zoom available in scroll mode", async () => {
