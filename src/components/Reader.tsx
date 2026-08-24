@@ -61,6 +61,17 @@ type PagePosition = {
   current: number;
   total: number;
 } | null;
+type ZoomGesture =
+  | {
+      type: "pinch";
+      distance: number;
+      imageScale: number;
+    }
+  | {
+      type: "pan";
+      x: number;
+      y: number;
+    };
 type ProgressSnapshot = {
   percent: number;
   label: string;
@@ -94,6 +105,7 @@ export function Reader({ file, onClose }: ReaderProps) {
     distance: number;
     imageScale: number;
   } | null>(null);
+  const zoomGestureRef = useRef<ZoomGesture | null>(null);
   const hotzoneTouchStartRef = useRef<{
     side: "left" | "right";
     x: number;
@@ -152,6 +164,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [imageDocumentActive, setImageDocumentActive] = useState(false);
   const [pageHotzoneWidth, setPageHotzoneWidth] = useState(DEFAULT_PAGE_HOTZONE_WIDTH);
   const [hotzonePinchActive, setHotzonePinchActive] = useState(false);
+  const [zoomGestureActive, setZoomGestureActive] = useState(false);
 
   const pageControls = getToolbarPageControls(gripMode);
 
@@ -162,6 +175,20 @@ export function Reader({ file, onClose }: ReaderProps) {
 
     pageHotzoneWidthRef.current = width;
     setPageHotzoneWidth(width);
+  }
+
+  function applyExternalImageScale(nextImageScale: number) {
+    const normalizedScale = Math.min(400, Math.max(100, Math.round(nextImageScale)));
+    const nextSettings = {
+      ...latestSettingsRef.current,
+      imageScale: normalizedScale
+    };
+    latestSettingsRef.current = nextSettings;
+    const rendition = renditionRef.current;
+    if (rendition) {
+      applyImageScaleToRenderedContents(rendition, nextSettings);
+    }
+    setImageScale(normalizedScale);
   }
 
   onCloseRef.current = onClose;
@@ -802,7 +829,7 @@ export function Reader({ file, onClose }: ReaderProps) {
       startDistance: start.distance,
       currentDistance: getTouchDistance(event.touches[0], event.touches[1])
     });
-    setImageScale(nextImageScale);
+    applyExternalImageScale(nextImageScale);
     event.preventDefault();
     event.stopPropagation();
     return true;
@@ -959,8 +986,136 @@ export function Reader({ file, onClose }: ReaderProps) {
     hotzoneTouchStartRef.current = null;
   }
 
+  function handleZoomGestureTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+    if (event.touches.length === 2) {
+      zoomGestureRef.current = {
+        type: "pinch",
+        distance: getTouchDistance(event.touches[0], event.touches[1]),
+        imageScale: latestSettingsRef.current.imageScale
+      };
+      setZoomGestureActive(true);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    if (event.touches.length === 1) {
+      const touch = event.touches[0];
+      zoomGestureRef.current = {
+        type: "pan",
+        x: touch.clientX,
+        y: touch.clientY
+      };
+      setZoomGestureActive(true);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    zoomGestureRef.current = null;
+    setZoomGestureActive(false);
+  }
+
+  function handleZoomGestureTouchMove(event: React.TouchEvent<HTMLDivElement>) {
+    const gesture = zoomGestureRef.current;
+    if (!gesture) {
+      return;
+    }
+
+    if (gesture.type === "pinch" && event.touches.length === 2) {
+      const nextImageScale = getPinchImageScale({
+        startScale: gesture.imageScale,
+        startDistance: gesture.distance,
+        currentDistance: getTouchDistance(event.touches[0], event.touches[1])
+      });
+      applyExternalImageScale(nextImageScale);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    if (gesture.type === "pan" && event.touches.length === 1) {
+      const touch = event.touches[0];
+      const deltaX = touch.clientX - gesture.x;
+      const deltaY = touch.clientY - gesture.y;
+      panZoomedImage(deltaX, deltaY);
+      zoomGestureRef.current = {
+        type: "pan",
+        x: touch.clientX,
+        y: touch.clientY
+      };
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
+  function handleZoomGestureTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+    if (!zoomGestureRef.current) {
+      return;
+    }
+
+    if (event.touches.length === 0 || zoomGestureRef.current.type === "pinch") {
+      zoomGestureRef.current = null;
+      setZoomGestureActive(false);
+    }
+    lastHotzoneTouchRef.current = Date.now();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleZoomGestureTouchCancel(event: React.TouchEvent<HTMLDivElement>) {
+    zoomGestureRef.current = null;
+    setZoomGestureActive(false);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleZoomGestureClick(event: React.MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - lastHotzoneTouchRef.current < 500) {
+      return;
+    }
+    uiActionsRef.current.toggleControls();
+  }
+
+  function panZoomedImage(deltaX: number, deltaY: number) {
+    const stage = stageRef.current;
+    if (stage) {
+      const nextScrollTop = Math.min(
+        Math.max(0, stage.scrollHeight - stage.clientHeight),
+        Math.max(0, stage.scrollTop - deltaY)
+      );
+      const nextScrollLeft = Math.min(
+        Math.max(0, stage.scrollWidth - stage.clientWidth),
+        Math.max(0, stage.scrollLeft - deltaX)
+      );
+      stage.scrollTop = nextScrollTop;
+      stage.scrollLeft = nextScrollLeft;
+    }
+
+    const rendition = renditionRef.current;
+    if (!rendition) {
+      return;
+    }
+
+    getRenderedContents(rendition).forEach((contents) => {
+      const scrollTarget =
+        contents.document.scrollingElement ??
+        contents.document.documentElement ??
+        contents.document.body;
+      scrollTarget.scrollLeft = Math.max(0, scrollTarget.scrollLeft - deltaX);
+      scrollTarget.scrollTop = Math.max(0, scrollTarget.scrollTop - deltaY);
+    });
+  }
+
   const chromeIsVisible =
     !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
+  const zoomGestureLayerVisible =
+    status === "ready" &&
+    readingMode === "page" &&
+    imageDocumentActive &&
+    (zoomGestureActive || (imageScale > 100 && !hotzonePinchActive));
 
   return (
     <section
@@ -1036,6 +1191,17 @@ export function Reader({ file, onClose }: ReaderProps) {
               onClick={(event) => handleHotzoneClick("right", event)}
             />
           </div>
+        ) : null}
+        {zoomGestureLayerVisible ? (
+          <div
+            className="reader-zoom-gesture-layer"
+            aria-label="图片缩放拖动区域"
+            onTouchStart={handleZoomGestureTouchStart}
+            onTouchMove={handleZoomGestureTouchMove}
+            onTouchEnd={handleZoomGestureTouchEnd}
+            onTouchCancel={handleZoomGestureTouchCancel}
+            onClick={handleZoomGestureClick}
+          />
         ) : null}
       </div>
 

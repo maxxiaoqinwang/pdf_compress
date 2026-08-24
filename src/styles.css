@@ -272,6 +272,15 @@ h1 {
   right: 0;
 }
 
+.reader-zoom-gesture-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+  cursor: grab;
+}
+
 .reader-chrome-top,
 .bottom-toolbar {
   position: absolute;
