@@ -700,6 +700,98 @@ describe("Reader mobile scroll controls", () => {
     expect(mocks.rendition.next).not.toHaveBeenCalled();
   });
 
+  it("turns from a zoomed image edge tap and keeps the zoom on the next page", async () => {
+    const { file } = createTestFile("comic-zoom-edge-turn.epub", 14);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 390,
+        bottom: 844,
+        left: 0,
+        width: 390,
+        height: 844,
+        toJSON: () => ({})
+      })
+    });
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.touchStart(rightZone, {
+        touches: [
+          { clientX: 300, clientY: 420 },
+          { clientX: 340, clientY: 420 }
+        ]
+      });
+      fireEvent.touchMove(rightZone, {
+        touches: [
+          { clientX: 260, clientY: 420 },
+          { clientX: 340, clientY: 420 }
+        ]
+      });
+      fireEvent.touchEnd(rightZone, {
+        touches: [],
+        changedTouches: [{ clientX: 260, clientY: 420 }]
+      });
+      await Promise.resolve();
+    });
+
+    const zoomLayer = await waitFor(() => {
+      const layer = container.querySelector(".reader-zoom-gesture-layer") as HTMLElement | null;
+      expect(layer).toBeInTheDocument();
+      return layer as HTMLElement;
+    });
+
+    await act(async () => {
+      fireEvent.touchStart(zoomLayer, {
+        touches: [{ clientX: 370, clientY: 420 }]
+      });
+      fireEvent.touchEnd(zoomLayer, {
+        touches: [],
+        changedTouches: [{ clientX: 370, clientY: 420 }]
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mocks.rendition.next).toHaveBeenCalledOnce());
+
+    const nextPageContents = createImageContents();
+    await act(async () => {
+      contentHook?.(nextPageContents);
+      await Promise.resolve();
+    });
+
+    expect(nextPageContents.addStylesheetCss).toHaveBeenCalledWith(
+      expect.stringContaining("200%"),
+      "reader-image-scale"
+    );
+  });
+
   it("scrolls a tall image page when dragging inside a page tap zone", async () => {
     const { file } = createTestFile("comic-hotzone-scroll.epub", 8);
     localStorage.setItem(

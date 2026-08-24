@@ -69,6 +69,8 @@ type ZoomGesture =
     }
   | {
       type: "pan";
+      startX: number;
+      startY: number;
       x: number;
       y: number;
     };
@@ -790,16 +792,39 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
 
     const bounds = stage.getBoundingClientRect();
+    turnFromClientX(side === "left" ? bounds.left + 1 : bounds.right - 1);
+  }
+
+  function turnFromClientX(clientX: number) {
+    const stage = stageRef.current;
+    if (!stage) {
+      return false;
+    }
+
+    const bounds = stage.getBoundingClientRect();
     const direction = getPageClickDirection({
       readingMode: "page",
       gripMode,
-      clientX: side === "left" ? bounds.left + 1 : bounds.right - 1,
+      clientX,
       boundsLeft: bounds.left,
-      boundsWidth: bounds.width
+      boundsWidth: bounds.width,
+      edgeRatio: getPageHotzoneEdgeRatio()
     });
-    if (direction) {
-      void turnPage(direction);
+    if (!direction) {
+      return false;
     }
+
+    void turnPage(direction);
+    return true;
+  }
+
+  function getPageHotzoneEdgeRatio() {
+    const match = /^(\d+(?:\.\d+)?)%$/.exec(pageHotzoneWidthRef.current.trim());
+    if (!match) {
+      return 0.3;
+    }
+
+    return Math.min(0.45, Math.max(0.05, Number(match[1]) / 100));
   }
 
   function beginHotzonePinch(event: React.TouchEvent<HTMLButtonElement>) {
@@ -1003,6 +1028,8 @@ export function Reader({ file, onClose }: ReaderProps) {
       const touch = event.touches[0];
       zoomGestureRef.current = {
         type: "pan",
+        startX: touch.clientX,
+        startY: touch.clientY,
         x: touch.clientX,
         y: touch.clientY
       };
@@ -1041,6 +1068,8 @@ export function Reader({ file, onClose }: ReaderProps) {
       panZoomedImage(deltaX, deltaY);
       zoomGestureRef.current = {
         type: "pan",
+        startX: gesture.startX,
+        startY: gesture.startY,
         x: touch.clientX,
         y: touch.clientY
       };
@@ -1050,11 +1079,30 @@ export function Reader({ file, onClose }: ReaderProps) {
   }
 
   function handleZoomGestureTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
-    if (!zoomGestureRef.current) {
+    const gesture = zoomGestureRef.current;
+    if (!gesture) {
       return;
     }
 
-    if (event.touches.length === 0 || zoomGestureRef.current.type === "pinch") {
+    if (gesture.type === "pan" && event.touches.length === 0) {
+      const touch = event.changedTouches[0];
+      if (
+        touch &&
+        isTapGesture({
+          startX: gesture.startX,
+          startY: gesture.startY,
+          endX: touch.clientX,
+          endY: touch.clientY
+        })
+      ) {
+        const didTurn = turnFromClientX(touch.clientX);
+        if (!didTurn) {
+          uiActionsRef.current.toggleControls();
+        }
+      }
+    }
+
+    if (event.touches.length === 0 || gesture.type === "pinch") {
       zoomGestureRef.current = null;
       setZoomGestureActive(false);
     }
@@ -1074,6 +1122,9 @@ export function Reader({ file, onClose }: ReaderProps) {
     event.preventDefault();
     event.stopPropagation();
     if (Date.now() - lastHotzoneTouchRef.current < 500) {
+      return;
+    }
+    if (turnFromClientX(event.clientX)) {
       return;
     }
     uiActionsRef.current.toggleControls();
