@@ -479,6 +479,66 @@ describe("Reader mobile scroll controls", () => {
     });
   });
 
+  it("keeps pinch zoom working when a gesture starts inside a page tap zone", async () => {
+    const { file } = createTestFile("comic-hotzone-pinch.epub", 11);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    expect(rightZone).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.touchStart(rightZone, {
+        touches: [
+          { clientX: 300, clientY: 420 },
+          { clientX: 340, clientY: 420 }
+        ]
+      });
+      fireEvent.touchMove(rightZone, {
+        touches: [
+          { clientX: 260, clientY: 420 },
+          { clientX: 340, clientY: 420 }
+        ]
+      });
+      fireEvent.touchEnd(rightZone, {
+        touches: [],
+        changedTouches: [
+          { clientX: 260, clientY: 420 },
+          { clientX: 340, clientY: 420 }
+        ]
+      });
+      await Promise.resolve();
+    });
+
+    expect(mocks.rendition.next).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "设置" }));
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("200%")).toBeInTheDocument();
+  });
+
   it("scrolls a tall image page when dragging inside a page tap zone", async () => {
     const { file } = createTestFile("comic-hotzone-scroll.epub", 8);
     localStorage.setItem(

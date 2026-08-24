@@ -90,6 +90,10 @@ export function Reader({ file, onClose }: ReaderProps) {
   const pageTurnLockedRef = useRef(false);
   const pageHotzoneWidthRef = useRef(DEFAULT_PAGE_HOTZONE_WIDTH);
   const lastHotzoneTouchRef = useRef(0);
+  const hotzonePinchStartRef = useRef<{
+    distance: number;
+    imageScale: number;
+  } | null>(null);
   const hotzoneTouchStartRef = useRef<{
     side: "left" | "right";
     x: number;
@@ -147,6 +151,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [controlsVisible, setControlsVisible] = useState(true);
   const [imageDocumentActive, setImageDocumentActive] = useState(false);
   const [pageHotzoneWidth, setPageHotzoneWidth] = useState(DEFAULT_PAGE_HOTZONE_WIDTH);
+  const [hotzonePinchActive, setHotzonePinchActive] = useState(false);
 
   const pageControls = getToolbarPageControls(gripMode);
 
@@ -770,10 +775,62 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
   }
 
+  function beginHotzonePinch(event: React.TouchEvent<HTMLButtonElement>) {
+    if (event.touches.length !== 2) {
+      return false;
+    }
+
+    hotzoneTouchStartRef.current = null;
+    hotzonePinchStartRef.current = {
+      distance: getTouchDistance(event.touches[0], event.touches[1]),
+      imageScale
+    };
+    setHotzonePinchActive(true);
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  function updateHotzonePinch(event: React.TouchEvent<HTMLButtonElement>) {
+    const start = hotzonePinchStartRef.current;
+    if (!start || event.touches.length !== 2) {
+      return false;
+    }
+
+    const nextImageScale = getPinchImageScale({
+      startScale: start.imageScale,
+      startDistance: start.distance,
+      currentDistance: getTouchDistance(event.touches[0], event.touches[1])
+    });
+    setImageScale(nextImageScale);
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  function finishHotzonePinch(event: React.TouchEvent<HTMLButtonElement>) {
+    if (!hotzonePinchStartRef.current) {
+      return false;
+    }
+
+    if (event.touches.length < 2) {
+      hotzonePinchStartRef.current = null;
+      setHotzonePinchActive(false);
+      lastHotzoneTouchRef.current = Date.now();
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   function handleHotzoneTouchStart(
     side: "left" | "right",
     event: React.TouchEvent<HTMLButtonElement>
   ) {
+    if (beginHotzonePinch(event)) {
+      return;
+    }
+
     if (event.touches.length !== 1) {
       hotzoneTouchStartRef.current = null;
       return;
@@ -797,6 +854,10 @@ export function Reader({ file, onClose }: ReaderProps) {
     const start = hotzoneTouchStartRef.current;
     const touch = event.touches[0];
     const stage = stageRef.current;
+    if (updateHotzonePinch(event)) {
+      return;
+    }
+
     if (!start || !touch || start.side !== side || event.touches.length !== 1 || !stage) {
       return;
     }
@@ -831,6 +892,10 @@ export function Reader({ file, onClose }: ReaderProps) {
   ) {
     const start = hotzoneTouchStartRef.current;
     const touch = event.changedTouches[0];
+    if (finishHotzonePinch(event)) {
+      return;
+    }
+
     hotzoneTouchStartRef.current = null;
     if (!start || !touch || start.side !== side) {
       return;
@@ -886,6 +951,14 @@ export function Reader({ file, onClose }: ReaderProps) {
     turnFromHotzone(side);
   }
 
+  function handleHotzoneTouchCancel(event: React.TouchEvent<HTMLButtonElement>) {
+    if (finishHotzonePinch(event)) {
+      return;
+    }
+
+    hotzoneTouchStartRef.current = null;
+  }
+
   const chromeIsVisible =
     !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
 
@@ -934,7 +1007,7 @@ export function Reader({ file, onClose }: ReaderProps) {
         {status === "ready" &&
         readingMode === "page" &&
         imageDocumentActive &&
-        imageScale <= 100 ? (
+        (imageScale <= 100 || hotzonePinchActive) ? (
           <div
             className="reader-hotzones"
             aria-label="分页点击区域"
@@ -948,6 +1021,7 @@ export function Reader({ file, onClose }: ReaderProps) {
               onTouchStart={(event) => handleHotzoneTouchStart("left", event)}
               onTouchMove={(event) => handleHotzoneTouchMove("left", event)}
               onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
+              onTouchCancel={handleHotzoneTouchCancel}
               onClick={(event) => handleHotzoneClick("left", event)}
             />
             <button
@@ -958,6 +1032,7 @@ export function Reader({ file, onClose }: ReaderProps) {
               onTouchStart={(event) => handleHotzoneTouchStart("right", event)}
               onTouchMove={(event) => handleHotzoneTouchMove("right", event)}
               onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
+              onTouchCancel={handleHotzoneTouchCancel}
               onClick={(event) => handleHotzoneClick("right", event)}
             />
           </div>
