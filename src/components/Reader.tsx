@@ -169,6 +169,11 @@ export function Reader({ file, onClose }: ReaderProps) {
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
 
   const pageControls = getToolbarPageControls(gripMode);
+  const desktopImmersiveActive =
+    !isCompactViewport &&
+    status === "ready" &&
+    readingMode === "page" &&
+    imageDocumentActive;
 
   function setMeasuredPageHotzoneWidth(width: string) {
     if (pageHotzoneWidthRef.current === width) {
@@ -211,12 +216,12 @@ export function Reader({ file, onClose }: ReaderProps) {
   };
   uiActionsRef.current = {
     toggleControls: () => {
-      if (isCompactViewport && activeSheetRef.current === null) {
+      if ((isCompactViewport || desktopImmersiveActive) && activeSheetRef.current === null) {
         setControlsVisible((visible) => !visible);
       }
     },
     showControls: () => {
-      if (isCompactViewport) {
+      if (isCompactViewport || desktopImmersiveActive) {
         setControlsVisible(true);
       }
     }
@@ -273,21 +278,40 @@ export function Reader({ file, onClose }: ReaderProps) {
   }, [status, readingMode, imageDocumentActive, imageScale]);
 
   useEffect(() => {
-    if (!isCompactViewport) {
-      setControlsVisible(true);
-      return undefined;
+    if (desktopImmersiveActive) {
+      setControlsVisible(false);
+      return;
     }
 
+    if (!isCompactViewport) {
+      setControlsVisible(true);
+    }
+  }, [desktopImmersiveActive, isCompactViewport]);
+
+  useEffect(() => {
     // Continuous scroll is the mode where the user most often needs to
     // reopen settings. Keep its chrome visible unless the user explicitly
     // hides it; the floating menu handle below can always restore it.
-    if (readingMode === "scroll" || status !== "ready" || activeSheet || !controlsVisible) {
+    if (
+      (!isCompactViewport && !desktopImmersiveActive) ||
+      readingMode === "scroll" ||
+      status !== "ready" ||
+      activeSheet ||
+      !controlsVisible
+    ) {
       return undefined;
     }
 
     const timer = window.setTimeout(() => setControlsVisible(false), 4500);
     return () => window.clearTimeout(timer);
-  }, [activeSheet, controlsVisible, isCompactViewport, readingMode, status]);
+  }, [
+    activeSheet,
+    controlsVisible,
+    desktopImmersiveActive,
+    isCompactViewport,
+    readingMode,
+    status
+  ]);
 
   useEffect(() => {
     const marker = `epub-reader-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1161,7 +1185,10 @@ export function Reader({ file, onClose }: ReaderProps) {
   }
 
   const chromeIsVisible =
-    !isCompactViewport || controlsVisible || activeSheet !== null || status !== "ready";
+    status !== "ready" ||
+    activeSheet !== null ||
+    controlsVisible ||
+    (!isCompactViewport && !desktopImmersiveActive);
   const zoomGestureLayerVisible =
     status === "ready" &&
     readingMode === "page" &&
@@ -1172,7 +1199,9 @@ export function Reader({ file, onClose }: ReaderProps) {
     <section
       className={`reader-shell ${theme} ${readingMode} ${
         chromeIsVisible ? "controls-visible" : "controls-hidden"
-      } ${imageDocumentActive ? "image-document-active" : ""}`}
+      } ${imageDocumentActive ? "image-document-active" : ""} ${
+        desktopImmersiveActive ? "desktop-immersive" : ""
+      }`}
       aria-label="EPUB 阅读器"
     >
       <div className="reader-chrome-top" aria-hidden={!chromeIsVisible}>
@@ -1256,7 +1285,9 @@ export function Reader({ file, onClose }: ReaderProps) {
         ) : null}
       </div>
 
-      {isCompactViewport && status === "ready" && !chromeIsVisible ? (
+      {(isCompactViewport || desktopImmersiveActive) &&
+      status === "ready" &&
+      !chromeIsVisible ? (
         <button
           className="reader-controls-reveal"
           type="button"

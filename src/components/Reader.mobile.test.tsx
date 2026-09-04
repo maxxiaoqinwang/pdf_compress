@@ -792,6 +792,59 @@ describe("Reader mobile scroll controls", () => {
     );
   });
 
+  it("uses desktop immersive chrome for image pages without changing mobile controls", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({
+      matches: false,
+      media: "(max-width: 760px)",
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true)
+    } as MediaQueryList);
+    const { file } = createTestFile("comic-desktop-immersive.epub", 15);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(createImageContents());
+      await Promise.resolve();
+    });
+
+    const toolbar = container.querySelector(".bottom-toolbar") as HTMLElement;
+    await waitFor(() => {
+      expect(screen.getByLabelText("EPUB 阅读器")).toHaveClass("desktop-immersive");
+      expect(toolbar).toHaveAttribute("aria-hidden", "true");
+    });
+    const revealButton = screen.getByRole("button", { name: "显示阅读控制" });
+    expect(revealButton).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(revealButton);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(toolbar).toHaveAttribute("aria-hidden", "false");
+      expect(screen.queryByRole("button", { name: "显示阅读控制" })).not.toBeInTheDocument();
+    });
+  });
+
   it("scrolls a tall image page when dragging inside a page tap zone", async () => {
     const { file } = createTestFile("comic-hotzone-scroll.epub", 8);
     localStorage.setItem(

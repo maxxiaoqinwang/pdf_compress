@@ -854,6 +854,38 @@ h1 {
 }
 
 @media (min-width: 761px) and (min-height: 501px) {
+  .app-shell.reading {
+    padding: 0;
+    background: #000;
+  }
+
+  .app-shell.reading .reader-shell {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .reader-shell.desktop-immersive,
+  .reader-shell.desktop-immersive .reader-layout,
+  .reader-shell.desktop-immersive .reader-stage,
+  .reader-shell.desktop-immersive .rendition-root {
+    background: #000;
+  }
+
+  .reader-shell.desktop-immersive .reader-controls-reveal {
+    top: 14px;
+    right: 14px;
+    bottom: auto;
+    left: auto;
+    min-width: 52px;
+    min-height: 38px;
+    padding: 0 12px;
+    border-color: rgba(231, 224, 213, 0.2);
+    color: #eee7db;
+    background: rgba(23, 22, 19, 0.78);
+    box-shadow: none;
+    transform: none;
+  }
+
   .sheet-backdrop {
     align-items: stretch;
     justify-content: flex-start;
