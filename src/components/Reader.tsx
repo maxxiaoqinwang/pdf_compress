@@ -94,6 +94,7 @@ const PROGRESS_SAVE_DELAY = 650;
 const DEFAULT_PAGE_HOTZONE_WIDTH = "30%";
 const TALL_IMAGE_PAGE_HOTZONE_WIDTH = "15%";
 const STAGE_SCROLL_TOLERANCE = 4;
+const IMAGE_SCALE_STEP = 10;
 
 export function Reader({ file, onClose }: ReaderProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -1409,10 +1410,10 @@ export function Reader({ file, onClose }: ReaderProps) {
                   canDecrease={imageScale > MIN_IMAGE_SCALE}
                   canIncrease={imageScale < MAX_IMAGE_SCALE}
                   onDecrease={() =>
-                    setImageScale((value) => Math.max(MIN_IMAGE_SCALE, value - 25))
+                    setImageScale((value) => Math.max(MIN_IMAGE_SCALE, value - IMAGE_SCALE_STEP))
                   }
                   onIncrease={() =>
-                    setImageScale((value) => Math.min(MAX_IMAGE_SCALE, value + 25))
+                    setImageScale((value) => Math.min(MAX_IMAGE_SCALE, value + IMAGE_SCALE_STEP))
                   }
                 />
 

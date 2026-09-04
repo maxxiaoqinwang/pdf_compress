@@ -228,7 +228,7 @@ describe("Reader mobile scroll controls", () => {
     });
     expect(increaseImageScale).toBeEnabled();
     fireEvent.click(increaseImageScale);
-    expect(screen.getByText("125%")).toBeInTheDocument();
+    expect(screen.getByText("110%")).toBeInTheDocument();
   });
 
   it("allows image scale to shrink below fit size from settings", async () => {
@@ -243,7 +243,7 @@ describe("Reader mobile scroll controls", () => {
     });
     expect(decreaseImageScale).toBeEnabled();
     fireEvent.click(decreaseImageScale);
-    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("90%")).toBeInTheDocument();
   });
 
   it("keeps the reader mounted when image scale is changed with the real synchronous stylesheet API", async () => {
@@ -280,7 +280,7 @@ describe("Reader mobile scroll controls", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("125%")).toBeInTheDocument();
+      expect(screen.getByText("110%")).toBeInTheDocument();
       expect(screen.getByLabelText("EPUB 阅读器")).toBeInTheDocument();
       expect(contents.addStylesheetCss).toHaveBeenCalled();
     });
