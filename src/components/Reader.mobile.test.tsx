@@ -71,16 +71,23 @@ import { createBookKey } from "../lib/storage";
 
 const LARGE_FILE_SIZE = 33 * 1024 * 1024;
 
-function createImageContents() {
+function createImageContents({ frameElement }: { frameElement?: HTMLIFrameElement } = {}) {
   const imageDocument = document.implementation.createHTMLDocument("comic-page");
   imageDocument.body.innerHTML = `
     <img src="page-1.jpg" width="1200" height="1800" />
     <img src="page-2.jpg" width="1200" height="1800" />
   `;
+  const contentWindow = frameElement ? (Object.create(window) as Window) : window;
+  if (frameElement) {
+    Object.defineProperty(contentWindow, "frameElement", {
+      configurable: true,
+      value: frameElement
+    });
+  }
 
   return {
     document: imageDocument,
-    window,
+    window: contentWindow,
     documentElement: imageDocument.documentElement,
     // epub.js 0.3.93 returns a synchronous boolean in browsers even though
     // its declaration file says Promise<boolean>. Keep the mock realistic so
@@ -97,6 +104,16 @@ function createTestFile(name: string, lastModified: number) {
   const arrayBuffer = vi.fn(async () => new ArrayBuffer(1024));
   Object.defineProperty(file, "arrayBuffer", { configurable: true, value: arrayBuffer });
   return { file, arrayBuffer };
+}
+
+function createWheelEvent(deltaY: number) {
+  const event = new Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+  Object.defineProperties(event, {
+    deltaX: { configurable: true, value: 0 },
+    deltaY: { configurable: true, value: deltaY },
+    deltaMode: { configurable: true, value: 0 }
+  });
+  return event;
 }
 
 describe("Reader mobile scroll controls", () => {
@@ -212,6 +229,21 @@ describe("Reader mobile scroll controls", () => {
     expect(increaseImageScale).toBeEnabled();
     fireEvent.click(increaseImageScale);
     expect(screen.getByText("125%")).toBeInTheDocument();
+  });
+
+  it("allows image scale to shrink below fit size from settings", async () => {
+    const { file } = createTestFile("comic-shrink.epub", 16);
+    render(<Reader file={file} onClose={() => {}} />);
+
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+
+    const decreaseImageScale = await screen.findByRole("button", {
+      name: "减小图片缩放"
+    });
+    expect(decreaseImageScale).toBeEnabled();
+    fireEvent.click(decreaseImageScale);
+    expect(screen.getByText("75%")).toBeInTheDocument();
   });
 
   it("keeps the reader mounted when image scale is changed with the real synchronous stylesheet API", async () => {
@@ -843,6 +875,60 @@ describe("Reader mobile scroll controls", () => {
       expect(toolbar).toHaveAttribute("aria-hidden", "false");
       expect(screen.queryByRole("button", { name: "显示阅读控制" })).not.toBeInTheDocument();
     });
+  });
+
+  it("scrolls tall paginated image pages with a mouse wheel over hotzones and the iframe", async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({
+      matches: false,
+      media: "(max-width: 760px)",
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true)
+    } as MediaQueryList);
+    const { file } = createTestFile("comic-wheel-tall.epub", 17);
+    localStorage.setItem(
+      `epub-reader-progress-v2:${createBookKey(file)}`,
+      JSON.stringify({
+        cfi: null,
+        percentage: null,
+        readingMode: "page",
+        updatedAt: Date.now()
+      })
+    );
+
+    const { container } = render(<Reader file={file} onClose={() => {}} />);
+    await waitFor(() => expect(mocks.rendition.display).toHaveBeenCalled());
+
+    const stage = container.querySelector(".reader-stage") as HTMLElement;
+    Object.defineProperties(stage, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 1600 }
+    });
+    const iframe = document.createElement("iframe");
+    stage.appendChild(iframe);
+    const contents = createImageContents({ frameElement: iframe });
+
+    const contentHook = mocks.rendition.hooks.content.register.mock.calls.at(-1)?.[0] as
+      | ((contents: ReturnType<typeof createImageContents>) => void)
+      | undefined;
+    expect(contentHook).toBeTypeOf("function");
+    await act(async () => {
+      contentHook?.(contents);
+      await Promise.resolve();
+    });
+
+    const rightZone = container.querySelector(".reader-hotzone.right") as HTMLButtonElement;
+    fireEvent.wheel(rightZone, { deltaY: 120, deltaMode: 0 });
+    expect(stage.scrollTop).toBe(120);
+
+    stage.scrollTop = 0;
+    const iframeWheel = createWheelEvent(180);
+    contents.document.dispatchEvent(iframeWheel);
+    expect(stage.scrollTop).toBe(180);
+    expect(iframeWheel.defaultPrevented).toBe(true);
   });
 
   it("scrolls a tall image page when dragging inside a page tap zone", async () => {

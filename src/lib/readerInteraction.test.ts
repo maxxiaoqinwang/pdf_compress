@@ -368,7 +368,7 @@ describe("touch helpers", () => {
       400
     );
     expect(getPinchImageScale({ startScale: 150, startDistance: 100, currentDistance: 10 })).toBe(
-      100
+      50
     );
   });
 });

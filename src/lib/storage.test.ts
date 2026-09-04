@@ -48,6 +48,26 @@ describe("reader storage", () => {
     });
   });
 
+  it("allows image scale below the fit-to-width size", () => {
+    saveReaderPreferences({
+      fontScale: 100,
+      gripMode: "right",
+      imageScale: 75,
+      lineHeight: 175,
+      theme: "paper"
+    });
+    expect(loadReaderPreferences().imageScale).toBe(75);
+
+    saveReaderPreferences({
+      fontScale: 100,
+      gripMode: "right",
+      imageScale: 10,
+      lineHeight: 175,
+      theme: "paper"
+    });
+    expect(loadReaderPreferences().imageScale).toBe(50);
+  });
+
   it("stores reading positions independently for each book", () => {
     saveBookProgress("book-a", {
       cfi: "epubcfi(/6/2!/4/2/2)",

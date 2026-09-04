@@ -1,4 +1,9 @@
-import type { GripMode, ReadingMode } from "./storage";
+import {
+  MAX_IMAGE_SCALE,
+  MIN_IMAGE_SCALE,
+  type GripMode,
+  type ReadingMode
+} from "./storage";
 
 type PageClickInput = {
   readingMode: ReadingMode;
@@ -194,11 +199,12 @@ export function isTapGesture({
 export function getImageScaleStylesheet(imageScale: number): string {
   const scale = normalizeImageScale(imageScale);
   const cursor = scale > 100 ? "grab" : "auto";
+  const minWidth = scale < 100 ? "0" : "100%";
 
   return `
       html.reader-image-document {
         width: var(--reader-fixed-layout-width, ${scale}%) !important;
-        min-width: 100% !important;
+        min-width: ${minWidth} !important;
         max-width: none !important;
         height: auto !important;
         min-height: 100% !important;
@@ -499,5 +505,5 @@ function finiteOrZero(value: unknown): number {
 }
 
 function normalizeImageScale(value: number): number {
-  return Math.min(400, Math.max(100, Math.round(value)));
+  return Math.min(MAX_IMAGE_SCALE, Math.max(MIN_IMAGE_SCALE, Math.round(value)));
 }

@@ -10,6 +10,8 @@ import {
   createBookKey,
   loadBookProgress,
   loadReaderPreferences,
+  MAX_IMAGE_SCALE,
+  MIN_IMAGE_SCALE,
   saveBookProgress,
   saveReaderPreferences,
   type GripMode,
@@ -185,7 +187,7 @@ export function Reader({ file, onClose }: ReaderProps) {
   }
 
   function applyExternalImageScale(nextImageScale: number) {
-    const normalizedScale = Math.min(400, Math.max(100, Math.round(nextImageScale)));
+    const normalizedScale = normalizeImageScale(nextImageScale);
     const nextSettings = {
       ...latestSettingsRef.current,
       imageScale: normalizedScale
@@ -809,6 +811,17 @@ export function Reader({ file, onClose }: ReaderProps) {
     }
   }
 
+  function handleStageWheel(event: React.WheelEvent<HTMLDivElement>) {
+    if (status !== "ready" || readingMode !== "page" || !imageDocumentActive) {
+      return;
+    }
+
+    if (scrollElementByWheelDelta(event.currentTarget, event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
   function turnFromHotzone(side: "left" | "right") {
     const stage = stageRef.current;
     if (!stage || imageScale > 100) {
@@ -1027,6 +1040,13 @@ export function Reader({ file, onClose }: ReaderProps) {
     turnFromHotzone(side);
   }
 
+  function handleHotzoneWheel(event: React.WheelEvent<HTMLButtonElement>) {
+    if (scrollElementByWheelDelta(stageRef.current, event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
   function handleHotzoneTouchCancel(event: React.TouchEvent<HTMLButtonElement>) {
     if (finishHotzonePinch(event)) {
       return;
@@ -1154,6 +1174,13 @@ export function Reader({ file, onClose }: ReaderProps) {
     uiActionsRef.current.toggleControls();
   }
 
+  function handleZoomGestureWheel(event: React.WheelEvent<HTMLDivElement>) {
+    if (scrollElementByWheelDelta(stageRef.current, event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
   function panZoomedImage(deltaX: number, deltaY: number) {
     const stage = stageRef.current;
     if (stage) {
@@ -1231,7 +1258,12 @@ export function Reader({ file, onClose }: ReaderProps) {
       </div>
 
       <div className="reader-layout">
-        <div ref={stageRef} className="reader-stage" onClick={handleStageClick}>
+        <div
+          ref={stageRef}
+          className="reader-stage"
+          onClick={handleStageClick}
+          onWheel={handleStageWheel}
+        >
           {status !== "ready" ? (
             <div className={`reader-message ${status}`} aria-live="polite">
               {message}
@@ -1257,6 +1289,7 @@ export function Reader({ file, onClose }: ReaderProps) {
               onTouchMove={(event) => handleHotzoneTouchMove("left", event)}
               onTouchEnd={(event) => handleHotzoneTouchEnd("left", event)}
               onTouchCancel={handleHotzoneTouchCancel}
+              onWheel={handleHotzoneWheel}
               onClick={(event) => handleHotzoneClick("left", event)}
             />
             <button
@@ -1268,6 +1301,7 @@ export function Reader({ file, onClose }: ReaderProps) {
               onTouchMove={(event) => handleHotzoneTouchMove("right", event)}
               onTouchEnd={(event) => handleHotzoneTouchEnd("right", event)}
               onTouchCancel={handleHotzoneTouchCancel}
+              onWheel={handleHotzoneWheel}
               onClick={(event) => handleHotzoneClick("right", event)}
             />
           </div>
@@ -1280,6 +1314,7 @@ export function Reader({ file, onClose }: ReaderProps) {
             onTouchMove={handleZoomGestureTouchMove}
             onTouchEnd={handleZoomGestureTouchEnd}
             onTouchCancel={handleZoomGestureTouchCancel}
+            onWheel={handleZoomGestureWheel}
             onClick={handleZoomGestureClick}
           />
         ) : null}
@@ -1371,10 +1406,14 @@ export function Reader({ file, onClose }: ReaderProps) {
                 <SettingStepper
                   label="图片缩放"
                   value={`${imageScale}%`}
-                  canDecrease={imageScale > 100}
-                  canIncrease={imageScale < 400}
-                  onDecrease={() => setImageScale((value) => Math.max(100, value - 25))}
-                  onIncrease={() => setImageScale((value) => Math.min(400, value + 25))}
+                  canDecrease={imageScale > MIN_IMAGE_SCALE}
+                  canIncrease={imageScale < MAX_IMAGE_SCALE}
+                  onDecrease={() =>
+                    setImageScale((value) => Math.max(MIN_IMAGE_SCALE, value - 25))
+                  }
+                  onIncrease={() =>
+                    setImageScale((value) => Math.min(MAX_IMAGE_SCALE, value + 25))
+                  }
                 />
 
                 <SettingGroup label="阅读模式">
@@ -1812,7 +1851,7 @@ function updateSingleImagePageWidth(contents: Contents, image: HTMLImageElement,
   );
   contents.document.documentElement.style.setProperty(
     "--reader-fixed-layout-width",
-    scaledWidth ? `${scaledWidth}px` : `${Math.min(400, Math.max(100, Math.round(imageScale)))}%`
+    scaledWidth ? `${scaledWidth}px` : `${normalizeImageScale(imageScale)}%`
   );
 }
 
@@ -1991,7 +2030,7 @@ function previewImageScale(contents: Contents, imageScale: number) {
 
   root.style.setProperty(
     "--reader-fixed-layout-width",
-    `${Math.min(400, Math.max(100, Math.round(imageScale)))}%`
+    `${normalizeImageScale(imageScale)}%`
   );
 }
 
@@ -2056,6 +2095,26 @@ function installContentPointerBehavior(
       previewImageScale(contents, pinchPreviewScale);
     });
   };
+
+  doc.addEventListener(
+    "wheel",
+    (event) => {
+      if (
+        settingsRef.current.readingMode !== "page" ||
+        !doc.documentElement.classList.contains("reader-image-document")
+      ) {
+        return;
+      }
+
+      const frameElement = contents.window.frameElement as HTMLIFrameElement | null;
+      const stage = frameElement?.closest(".reader-stage") as HTMLElement | null;
+      if (scrollElementByWheelDelta(stage, event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    touchListenerOptions
+  );
 
   doc.addEventListener(
     "mousedown",
@@ -2390,6 +2449,70 @@ function getContentViewportHeight(contents: Contents): number {
 
 function readFiniteLayoutValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function normalizeImageScale(value: number): number {
+  return Number.isFinite(value)
+    ? Math.min(MAX_IMAGE_SCALE, Math.max(MIN_IMAGE_SCALE, Math.round(value)))
+    : 100;
+}
+
+type WheelDeltaLike = Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">;
+
+function scrollElementByWheelDelta(
+  element: HTMLElement | null,
+  { deltaX, deltaY, deltaMode }: WheelDeltaLike
+): boolean {
+  if (!element) {
+    return false;
+  }
+
+  const nextScrollTop = getNextScrollValue(
+    element.scrollTop,
+    getWheelPixelDelta(deltaY, deltaMode, element.clientHeight),
+    element.scrollHeight,
+    element.clientHeight
+  );
+  const nextScrollLeft = getNextScrollValue(
+    element.scrollLeft,
+    getWheelPixelDelta(deltaX, deltaMode, element.clientWidth),
+    element.scrollWidth,
+    element.clientWidth
+  );
+
+  if (nextScrollTop === element.scrollTop && nextScrollLeft === element.scrollLeft) {
+    return false;
+  }
+
+  element.scrollTop = nextScrollTop;
+  element.scrollLeft = nextScrollLeft;
+  return true;
+}
+
+function getNextScrollValue(
+  currentValue: number,
+  delta: number,
+  scrollSize: number,
+  clientSize: number
+): number {
+  const maxValue = Math.max(0, scrollSize - clientSize);
+  return Math.min(maxValue, Math.max(0, currentValue + delta));
+}
+
+function getWheelPixelDelta(delta: number, deltaMode: number, pageSize: number): number {
+  if (!Number.isFinite(delta)) {
+    return 0;
+  }
+
+  if (deltaMode === 1) {
+    return delta * 16;
+  }
+
+  if (deltaMode === 2) {
+    return delta * Math.max(1, pageSize);
+  }
+
+  return delta;
 }
 
 function isZoomedImageDocument(doc: Document, settings: ReaderSettings): boolean {

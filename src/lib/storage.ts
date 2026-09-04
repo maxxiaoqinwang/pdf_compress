@@ -25,6 +25,8 @@ type LegacyReaderState = ReaderPreferences & {
 const PREFERENCES_KEY = "epub-reader-preferences-v2";
 const PROGRESS_KEY_PREFIX = "epub-reader-progress-v2:";
 const LEGACY_STATE_KEY = "epub-reader-state";
+export const MIN_IMAGE_SCALE = 50;
+export const MAX_IMAGE_SCALE = 400;
 
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   fontScale: 100,
@@ -130,7 +132,7 @@ function normalizeImageScale(value: unknown): number {
     return DEFAULT_READER_PREFERENCES.imageScale;
   }
 
-  return Math.min(400, Math.max(100, Math.round(value)));
+  return Math.min(MAX_IMAGE_SCALE, Math.max(MIN_IMAGE_SCALE, Math.round(value)));
 }
 
 function normalizeGripMode(value: unknown): GripMode {
